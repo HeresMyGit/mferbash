@@ -518,7 +518,7 @@ let eventQueue;
 let levelParts = null;
 let currentLevelIndex = 0;
 
-// Game phases: 'placing' (click to place mfers) → 'playing' (go pressed, physics active)
+// Game phases: 'placing' (click to place, shift+drag to set height) → 'playing' (go pressed, physics active)
 let gamePhase = 'placing';
 let placedMfers = [];        // idle mfers placed during placing phase: { scene, mixer }
 let mfers = [];              // active ragdoll mfers
@@ -592,8 +592,8 @@ async function init() {
 
   window.addEventListener('resize', onResize);
   window.addEventListener('click', onClick);
-  window.addEventListener('touchstart', (e) => { e.preventDefault(); onClick(e); }, { passive: false });
   window.addEventListener('mousemove', updateGhostPreview);
+  window.addEventListener('touchstart', (e) => { e.preventDefault(); onClick(e); }, { passive: false });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'd' || e.key === 'D') {
       showDebug = !showDebug;
@@ -694,7 +694,7 @@ async function init() {
 
   document.getElementById('loading').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
-  document.getElementById('instructions').textContent = 'click to place mfers, then go!';
+  document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
   animate();
 }
 
@@ -738,7 +738,7 @@ function addDynamicBox(p, pos, size, color, mass = 1.5) {
 function createStairLevel() {
   return {
     name: 'stairs',
-    spawnPos: { x: -1, y: 7, z: 0 },
+    spawnPos: { x: -1, y: 1, z: 0 },
     groundY: 1,
     cameraStart: { pos: [0, 6, 14], lookAt: [0, 4, 0] },
 
@@ -1159,7 +1159,7 @@ function switchLevel(index) {
   });
 
   settled = false;
-  document.getElementById('instructions').textContent = 'click to place mfers, then go!';
+  document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
@@ -1211,12 +1211,12 @@ async function loadModel() {
       cloned.scale.setScalar(modelScale);
       console.log('Scale:', modelScale.toFixed(2));
 
-      // Position at top of stairs, suspended
-      const stairTopX = -1;
+      // Position from level's spawn point
+      const sp = LEVELS[currentLevelIndex].spawnPos;
       cloned.position.set(
-        stairTopX - modelCenter.x * modelScale,
-        settings.dropHeight,
-        -modelCenter.z * modelScale
+        sp.x - modelCenter.x * modelScale,
+        sp.y,
+        sp.z - modelCenter.z * modelScale
       );
       originalPos.copy(cloned.position);
 
@@ -1426,11 +1426,10 @@ function getClickWorldPos(e) {
   pointer.y = -(clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
 
-  // Intersect with horizontal plane at actual ground surface
   const gy = LEVELS[currentLevelIndex].groundY ?? 1;
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy);
   const hitPoint = new THREE.Vector3();
-  raycaster.ray.intersectPlane(plane, hitPoint);
+  if (!raycaster.ray.intersectPlane(plane, hitPoint)) return null;
   return hitPoint;
 }
 
@@ -1444,9 +1443,30 @@ function createGhostPreview() {
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), mat);
   head.position.y = 1.9;
   group.add(head);
+  // Direction arrow (cone pointing forward)
+  const arrowMat = new THREE.MeshBasicMaterial({ color: 0x4ecdc4, transparent: true, opacity: 0.6 });
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 6), arrowMat);
+  arrow.rotation.x = Math.PI / 2; // point along Z
+  arrow.position.set(0, 0.02, 0.5);
+  group.add(arrow);
   group.visible = false;
   scene.add(group);
   return group;
+}
+
+function getShiftHeight(e) {
+  const gy = LEVELS[currentLevelIndex].groundY ?? 1;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+  // Project the ghost's ground-level position to screen space to find baseline
+  const groundProj = ghostPreview.position.clone();
+  groundProj.y = gy;
+  groundProj.project(camera);
+  const groundScreenY = (1 - groundProj.y) / 2 * window.innerHeight;
+
+  // Height = how far mouse is above that baseline (positive = up)
+  const delta = groundScreenY - clientY;
+  return gy + Math.max(0, delta * 0.03);
 }
 
 function updateGhostPreview(e) {
@@ -1460,12 +1480,22 @@ function updateGhostPreview(e) {
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy);
   const hit = new THREE.Vector3();
   if (raycaster.ray.intersectPlane(plane, hit)) {
-    ghostPreview.position.set(hit.x, hit.y, hit.z);
+    if (e.shiftKey) {
+      // Lock X/Z, height from mouse Y, rotation from mouse X
+      hit.y = getShiftHeight(e);
+      ghostPreview.position.y = hit.y;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const rx = (clientX / window.innerWidth) * 2 - 1; // -1 to 1
+      ghostPreview.rotation.y = rx * Math.PI; // full 360 range
+    } else {
+      ghostPreview.position.set(hit.x, hit.y, hit.z);
+      ghostPreview.rotation.y = 0;
+    }
     ghostPreview.visible = true;
   }
 }
 
-function spawnIdleMfer(worldPos) {
+function spawnIdleMfer(worldPos, rotationY) {
   if (!originalGltf) return null;
 
   const cloned = SkeletonUtils.clone(originalGltf.scene);
@@ -1475,6 +1505,7 @@ function spawnIdleMfer(worldPos) {
   applyRandomAppearance(cloned);
   cloned.scale.setScalar(modelScale);
   cloned.position.set(worldPos.x - modelCenter.x * modelScale, worldPos.y, worldPos.z - modelCenter.z * modelScale);
+  if (rotationY !== undefined) cloned.rotation.y = rotationY;
 
   cloned.traverse((child) => {
     if (child.isBone) { child.userData.origPos = child.position.clone(); child.userData.origQuat = child.quaternion.clone(); child.userData.origScale = child.scale.clone(); }
@@ -1540,12 +1571,19 @@ function activateAllMfers() {
 }
 
 function onClick(e) {
-  if (e.target.closest('#controls, #level-select, #reset-btn, #go-btn, #toggle-controls, #cam-toggle')) return;
+  if (e.target.closest('#controls, #level-select, #reset-btn, #go-btn, #toggle-controls, #cam-toggle, #cam-hint')) return;
 
   if (gamePhase === 'placing') {
-    // Place an idle mfer at click position
-    const worldPos = getClickWorldPos(e);
-    if (!worldPos) return;
+    let worldPos, rotY;
+    if (e.shiftKey && ghostPreview) {
+      // Use ghost's locked X/Z, height, and rotation
+      worldPos = ghostPreview.position.clone();
+      worldPos.y = getShiftHeight(e);
+      rotY = ghostPreview.rotation.y;
+    } else {
+      worldPos = getClickWorldPos(e);
+      if (!worldPos) return;
+    }
 
     // Move the initial idle mfer into placedMfers on first placement click
     if (gltfScene) {
@@ -1554,7 +1592,7 @@ function onClick(e) {
       mixer = null;
     }
 
-    const pm = spawnIdleMfer(worldPos);
+    const pm = spawnIdleMfer(worldPos, rotY);
     if (pm) placedMfers.push(pm);
 
     const count = placedMfers.length;
@@ -1562,6 +1600,7 @@ function onClick(e) {
   } else {
     // Playing phase: spawn and immediately ragdoll at click position
     const worldPos = getClickWorldPos(e);
+    if (e.shiftKey && worldPos) worldPos.y = getShiftHeight(e);
     if (!worldPos) return;
     const pm = spawnIdleMfer(worldPos);
     if (pm) {
@@ -1635,7 +1674,6 @@ function reset() {
     applyRandomAppearance(cloned);
     cloned.scale.setScalar(modelScale);
     cloned.position.copy(originalPos);
-    cloned.position.y = settings.dropHeight;
     cloned.traverse((child) => {
       if (child.isBone) {
         child.userData.origPos = child.position.clone();
@@ -1655,7 +1693,7 @@ function reset() {
   if (levelParts && levelParts.reset) levelParts.reset();
 
   settled = false;
-  document.getElementById('instructions').textContent = 'click to place mfers, then go!';
+  document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
