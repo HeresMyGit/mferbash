@@ -528,6 +528,7 @@ let currentLevel = null;
 let gamePhase = 'placing';
 let placedMfers = [];        // idle mfers placed during placing phase: { scene, mixer }
 let mfers = [];              // active ragdoll mfers
+let savedSpawns = [];        // saved { x, y, z, rotY } for reset
 
 // Camera
 let orbitControls;
@@ -593,6 +594,7 @@ async function init() {
 
   currentLevel = getLevel(0);
   levelParts = currentLevel.build();
+  updateLevelSliders(0);
   const cam = currentLevel.cameraStart;
   camera.position.set(...cam.pos);
   camera.lookAt(...cam.lookAt);
@@ -642,6 +644,10 @@ async function init() {
   document.getElementById('reset-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     reset();
+  });
+  document.getElementById('clear-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearAll();
   });
 
   // Settings panel toggle
@@ -1858,10 +1864,17 @@ function cleanupLevel() {
   levelParts = null;
 }
 
+function updateLevelSliders(index) {
+  document.querySelectorAll('#controls label[data-level]').forEach(label => {
+    label.style.display = parseInt(label.dataset.level) === index ? '' : 'none';
+  });
+}
+
 function switchLevel(index) {
   // Clean up placed idle mfers
   for (const pm of placedMfers) { if (pm.mixer) pm.mixer.stopAllAction(); if (pm.triggerBody) world.removeRigidBody(pm.triggerBody); scene.remove(pm.scene); }
   placedMfers = [];
+  savedSpawns = [];
   gamePhase = 'placing';
 
   // Clean up all mfers
@@ -1908,15 +1921,17 @@ function switchLevel(index) {
     if (idle) mixer.clipAction(idle).play();
   }
 
-  // Update level selector buttons
+  // Update level selector buttons + level-specific sliders
   document.querySelectorAll('.level-btn').forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.dataset.level) === index);
   });
+  updateLevelSliders(index);
 
   settled = false;
   document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('clear-btn').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
 }
 
@@ -2334,7 +2349,7 @@ function activateAllMfers() {
 }
 
 function onClick(e) {
-  if (e.target.closest('#controls, #level-select, #reset-btn, #go-btn, #toggle-controls, #cam-toggle, #cam-hint')) return;
+  if (e.target.closest('#controls, #level-select, #reset-btn, #clear-btn, #go-btn, #toggle-controls, #cam-toggle, #cam-hint')) return;
 
   if (gamePhase === 'placing') {
     let worldPos, rotY;
@@ -2350,13 +2365,20 @@ function onClick(e) {
 
     // Move the initial idle mfer into placedMfers on first placement click
     if (gltfScene) {
+      const ix = gltfScene.position.x + modelCenter.x * modelScale;
+      const iy = gltfScene.position.y;
+      const iz = gltfScene.position.z + modelCenter.z * modelScale;
+      savedSpawns.push({ x: ix, y: iy, z: iz, rotY: gltfScene.rotation.y });
       placedMfers.push({ scene: gltfScene, mixer });
       gltfScene = null;
       mixer = null;
     }
 
     const pm = spawnIdleMfer(worldPos, rotY);
-    if (pm) placedMfers.push(pm);
+    if (pm) {
+      placedMfers.push(pm);
+      savedSpawns.push({ x: worldPos.x, y: worldPos.y, z: worldPos.z, rotY: rotY || 0 });
+    }
 
     const count = placedMfers.length;
     document.getElementById('instructions').textContent = `${count} mfer${count > 1 ? 's' : ''} placed — click to add more`;
@@ -2379,6 +2401,7 @@ function onGo() {
   if (ghostPreview) ghostPreview.visible = false;
   document.getElementById('go-btn').style.display = 'none';
   document.getElementById('reset-btn').style.display = 'block';
+  document.getElementById('clear-btn').style.display = 'block';
   document.getElementById('instructions').textContent = '';
 
   settled = false;
@@ -2393,60 +2416,49 @@ function onGo() {
   if (level.onDrop && levelParts) level.onDrop(levelParts);
 }
 
-function reset() {
-  // Clean up all mfers
+function cleanupMfers() {
   for (const mfer of mfers) {
     for (const joint of mfer.ragdollJointRefs) world.removeImpulseJoint(joint, true);
     for (const body of Object.values(mfer.ragdollBodies)) world.removeRigidBody(body);
-    for (const d of mfer.debugMeshes) {
-      scene.remove(d.mesh);
-      d.mesh.geometry.dispose();
-      d.mesh.material.dispose();
-    }
+    for (const d of mfer.debugMeshes) { scene.remove(d.mesh); d.mesh.geometry.dispose(); d.mesh.material.dispose(); }
     if (mfer.detachedPieces) {
-      for (const piece of mfer.detachedPieces) {
-        world.removeRigidBody(piece.body);
-        scene.remove(piece.mesh);
-        piece.geo.dispose();
-      }
+      for (const piece of mfer.detachedPieces) { world.removeRigidBody(piece.body); scene.remove(piece.mesh); piece.geo.dispose(); }
     }
     scene.remove(mfer.scene);
   }
   mfers = [];
-
-  // Clean up placed idle mfers (including trigger bodies)
   for (const pm of placedMfers) {
     if (pm.mixer) pm.mixer.stopAllAction();
     if (pm.triggerBody) world.removeRigidBody(pm.triggerBody);
     scene.remove(pm.scene);
   }
   placedMfers = [];
+}
+
+function reset() {
+  cleanupMfers();
   gamePhase = 'placing';
 
-  // Create fresh idle mfer
-  if (originalGltf) {
+  // Re-create all mfers at their saved spawn positions
+  for (const sp of savedSpawns) {
+    const pm = spawnIdleMfer({ x: sp.x, y: sp.y, z: sp.z }, sp.rotY);
+    if (pm) placedMfers.push(pm);
+  }
+
+  // Create the default idle mfer if no saved spawns (first load)
+  if (savedSpawns.length === 0 && originalGltf) {
     const cloned = SkeletonUtils.clone(originalGltf.scene);
     cloned.traverse((child) => {
-      if (child.isMesh) {
-        child.visible = false;
-        child.castShadow = true;
-        child.receiveShadow = true;
-        child.frustumCulled = false;
-      }
+      if (child.isMesh) { child.visible = false; child.castShadow = true; child.receiveShadow = true; child.frustumCulled = false; }
     });
     applyRandomAppearance(cloned);
     cloned.scale.setScalar(modelScale);
     cloned.position.copy(originalPos);
     cloned.traverse((child) => {
-      if (child.isBone) {
-        child.userData.origPos = child.position.clone();
-        child.userData.origQuat = child.quaternion.clone();
-        child.userData.origScale = child.scale.clone();
-      }
+      if (child.isBone) { child.userData.origPos = child.position.clone(); child.userData.origQuat = child.quaternion.clone(); child.userData.origScale = child.scale.clone(); }
     });
     scene.add(cloned);
     gltfScene = cloned;
-
     mixer = new THREE.AnimationMixer(cloned);
     const idle = originalGltf.animations.find(a => a.name.toLowerCase().includes('idle')) || originalGltf.animations[0];
     if (idle) mixer.clipAction(idle).play();
@@ -2477,6 +2489,56 @@ function reset() {
   document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('clear-btn').style.display = 'none';
+  document.getElementById('go-btn').style.display = 'block';
+  const cam = currentLevel.cameraStart;
+  camera.position.set(...cam.pos);
+  camera.lookAt(...cam.lookAt);
+}
+
+function clearAll() {
+  cleanupMfers();
+  savedSpawns = [];
+  gamePhase = 'placing';
+
+  // Remove old idle mfer if any
+  if (gltfScene) { scene.remove(gltfScene); gltfScene = null; mixer = null; }
+
+  // Spawn fresh default idle mfer
+  if (originalGltf) {
+    const cloned = SkeletonUtils.clone(originalGltf.scene);
+    cloned.traverse(c => { if (c.isMesh) { c.visible = false; c.castShadow = true; c.receiveShadow = true; c.frustumCulled = false; } });
+    applyRandomAppearance(cloned);
+    cloned.scale.setScalar(modelScale);
+    cloned.position.copy(originalPos);
+    cloned.traverse(c => { if (c.isBone) { c.userData.origPos = c.position.clone(); c.userData.origQuat = c.quaternion.clone(); c.userData.origScale = c.scale.clone(); } });
+    scene.add(cloned);
+    gltfScene = cloned;
+    mixer = new THREE.AnimationMixer(cloned);
+    const idle = originalGltf.animations.find(a => a.name.toLowerCase().includes('idle')) || originalGltf.animations[0];
+    if (idle) mixer.clipAction(idle).play();
+  }
+
+  // Reset dynamic parts
+  if (levelParts) {
+    for (const dp of levelParts.dynamicParts) {
+      if (dp.initPos) {
+        dp.body.setTranslation(dp.initPos, true);
+        dp.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+        dp.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        dp.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        dp.mesh.position.set(dp.initPos.x, dp.initPos.y, dp.initPos.z);
+        dp.mesh.quaternion.set(0, 0, 0, 1);
+      }
+    }
+    if (levelParts.reset) levelParts.reset();
+  }
+
+  settled = false;
+  document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
+  document.getElementById('score').textContent = '';
+  document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('clear-btn').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
   const cam = currentLevel.cameraStart;
   camera.position.set(...cam.pos);
