@@ -2240,7 +2240,14 @@ function getClickWorldPos(e) {
   pointer.y = -(clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
 
-  const gy = currentLevel.groundY ?? 1;
+  // Raycast against level geometry for terrain-aware placement
+  if (levelParts && levelParts.staticMeshes.length > 0) {
+    const hits = raycaster.intersectObjects(levelParts.staticMeshes, false);
+    if (hits.length > 0) return hits[0].point.clone();
+  }
+
+  // Fallback to ground plane
+  const gy = currentLevel?.groundY ?? 1;
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy);
   const hitPoint = new THREE.Vector3();
   if (!raycaster.ray.intersectPlane(plane, hitPoint)) return null;
@@ -2269,31 +2276,24 @@ function createGhostPreview() {
 }
 
 function getShiftHeight(e) {
-  const gy = currentLevel.groundY ?? 1;
   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-  // Project the ghost's ground-level position to screen space to find baseline
+  // Project the ghost's current position to screen to find baseline
   const groundProj = ghostPreview.position.clone();
-  groundProj.y = gy;
+  const baseY = groundProj.y; // current terrain height
   groundProj.project(camera);
   const groundScreenY = (1 - groundProj.y) / 2 * window.innerHeight;
 
   // Height = how far mouse is above that baseline (positive = up)
   const delta = groundScreenY - clientY;
-  return gy + Math.max(0, delta * 0.03);
+  return baseY + Math.max(0, delta * 0.03);
 }
 
 function updateGhostPreview(e) {
   if (gamePhase !== 'placing' || !ghostPreview) return;
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  pointer.x = (clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  const gy = currentLevel.groundY ?? 1;
-  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy);
-  const hit = new THREE.Vector3();
-  if (raycaster.ray.intersectPlane(plane, hit)) {
+  const worldPos = getClickWorldPos(e);
+  if (worldPos) {
+    const hit = worldPos;
     if (e.shiftKey) {
       // Lock X/Z, height from mouse Y, rotation from mouse X
       hit.y = getShiftHeight(e);
