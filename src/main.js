@@ -514,11 +514,18 @@ let showDebug = false;
 let eventQueue;
 
 // Level system
-let levelParts = null;       // { staticBodies, staticMeshes, dynamicParts, helpers, animatedObjects, reset?, dispose? }
+let levelParts = null;
 let currentLevelIndex = 0;
 
-// All dropped mfers
-let mfers = [];
+// Game phases: 'placing' (click to place mfers) → 'playing' (go pressed, physics active)
+let gamePhase = 'placing';
+let placedMfers = [];        // idle mfers placed during placing phase: { scene, mixer }
+let mfers = [];              // active ragdoll mfers
+
+// Raycasting + placement preview
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let ghostPreview = null;
 
 async function init() {
   await RAPIER.init();
@@ -564,14 +571,21 @@ async function init() {
   levelParts = LEVELS[0].build();
   await loadModel();
 
+  ghostPreview = createGhostPreview();
+
   window.addEventListener('resize', onResize);
-  window.addEventListener('click', onDrop);
-  window.addEventListener('touchstart', onDrop);
+  window.addEventListener('click', onClick);
+  window.addEventListener('touchstart', (e) => { e.preventDefault(); onClick(e); }, { passive: false });
+  window.addEventListener('mousemove', updateGhostPreview);
   window.addEventListener('keydown', (e) => {
     if (e.key === 'd' || e.key === 'D') {
       showDebug = !showDebug;
       for (const m of mfers) for (const d of m.debugMeshes) d.mesh.visible = showDebug;
     }
+  });
+  document.getElementById('go-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    onGo();
   });
   document.getElementById('reset-btn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -637,6 +651,8 @@ async function init() {
   });
 
   document.getElementById('loading').style.display = 'none';
+  document.getElementById('go-btn').style.display = 'block';
+  document.getElementById('instructions').textContent = 'click to place mfers, then go!';
   animate();
 }
 
@@ -681,6 +697,7 @@ function createStairLevel() {
   return {
     name: 'stairs',
     spawnPos: { x: -1, y: 7, z: 0 },
+    groundY: 1,
     cameraStart: { pos: [0, 6, 14], lookAt: [0, 4, 0] },
 
     build() {
@@ -731,6 +748,7 @@ function createTruckHitLevel() {
   return {
     name: 'truck hit',
     spawnPos: { x: 0, y: 1, z: 0 },
+    groundY: 1,
     cameraStart: { pos: [5, 4, 12], lookAt: [0, 1, 0] },
     settingsOverrides: { launchSpeed: 0, dropHeight: 1 },
     keepIdleUntilImpact: true,
@@ -935,41 +953,47 @@ function createTruckHitLevel() {
             trafficLights[0].material.emissive.setHex(0xff0000); // red on
           }
 
-          if (!truckState.hitMfer) {
+          if (!truckState.gonePhysics) {
+            // Kinematic phase: truck drives unstoppably, plows through everything
             truckState.currentX += truckState.speed * dt;
             truckBody.setNextKinematicTranslation({ x: truckState.currentX, y: 2.5, z: -1.5 });
             const t = truckBody.translation();
             truckGroup.position.set(t.x, t.y, t.z);
             for (const w of wheels) w.rotation.z -= truckState.speed * dt * 3;
 
-            // When truck reaches mfer position — create ragdoll and smash
-            if (truckState.currentX >= -1 && gltfScene) {
-              if (mixer) mixer.stopAllAction();
-              const mfer = createRagdoll(gltfScene);
-              if (mfer) {
-                // Apply massive truck impulse to all ragdoll bodies
-                const truckVelX = truckState.speed;
-                for (const body of Object.values(mfer.ragdollBodies)) {
-                  body.setLinvel({ x: truckVelX * 0.8 + Math.random() * 3, y: 4 + Math.random() * 4, z: (Math.random() - 0.5) * 8 }, true);
-                  body.setAngvel({ x: (Math.random() - 0.5) * 15, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 15 }, true);
+            // Convert placed idle mfers to ragdolls as the truck front reaches them
+            const truckFrontX = truckState.currentX + 3.5;
+            const remaining = [];
+            for (const pm of placedMfers) {
+              const mferX = pm.scene.position.x;
+              if (truckFrontX >= mferX - 0.5) {
+                if (pm.mixer) pm.mixer.stopAllAction();
+                const mfer = createRagdoll(pm.scene);
+                if (mfer) {
+                  const tv = truckState.speed;
+                  for (const body of Object.values(mfer.ragdollBodies)) {
+                    body.setLinvel({ x: tv * 0.8 + Math.random() * 3, y: 4 + Math.random() * 4, z: (Math.random() - 0.5) * 8 }, true);
+                    body.setAngvel({ x: (Math.random() - 0.5) * 15, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 15 }, true);
+                  }
+                  mfer.ragdollActive = true;
+                  detachAccessories(mfer);
+                  mfers.push(mfer);
                 }
-                mfer.ragdollActive = true;
-                detachAccessories(mfer);
-                mfers.push(mfer);
+              } else {
+                remaining.push(pm);
               }
-              gltfScene = null;
-              mixer = null;
-              truckState.hitMfer = true;
-              truckState.justHit = true;
+            }
+            placedMfers = remaining;
+
+            // Once truck is well past the action zone, switch to dynamic for spinout
+            if (truckState.currentX > 20) {
+              truckState.gonePhysics = true;
+              truckBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+              truckBody.setLinvel({ x: truckState.speed * 0.5, y: 1, z: (Math.random() - 0.5) * 3 }, true);
+              truckBody.setAngvel({ x: 0, y: (Math.random() - 0.5) * 2, z: (Math.random() - 0.5) * 0.5 }, true);
             }
           } else {
-            // Truck is now dynamic — sync mesh from physics
-            if (truckState.justHit) {
-              truckBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-              truckBody.setLinvel({ x: truckState.speed * 0.6, y: 1, z: (Math.random() - 0.5) * 3 }, true);
-              truckBody.setAngvel({ x: 0, y: (Math.random() - 0.5) * 2, z: (Math.random() - 0.5) * 0.5 }, true);
-              truckState.justHit = false;
-            }
+            // Dynamic phase: truck is physics-driven, sync mesh
             const t = truckBody.translation();
             const r = truckBody.rotation();
             truckGroup.position.set(t.x, t.y, t.z);
@@ -984,6 +1008,7 @@ function createTruckHitLevel() {
         truckState.active = false;
         truckState.hitMfer = false;
         truckState.justHit = false;
+        truckState.gonePhysics = false;
         truckState.lightSwitched = false;
         truckState.currentX = -30;
         truckBody.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
@@ -1037,6 +1062,11 @@ function cleanupLevel() {
 }
 
 function switchLevel(index) {
+  // Clean up placed idle mfers
+  for (const pm of placedMfers) { if (pm.mixer) pm.mixer.stopAllAction(); if (pm.triggerBody) world.removeRigidBody(pm.triggerBody); scene.remove(pm.scene); }
+  placedMfers = [];
+  gamePhase = 'placing';
+
   // Clean up all mfers
   for (const mfer of mfers) {
     for (const joint of mfer.ragdollJointRefs) world.removeImpulseJoint(joint, true);
@@ -1087,9 +1117,10 @@ function switchLevel(index) {
   });
 
   settled = false;
-  document.getElementById('instructions').textContent = 'click to drop';
+  document.getElementById('instructions').textContent = 'click to place mfers, then go!';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('go-btn').style.display = 'block';
 }
 
 async function loadModel() {
@@ -1302,15 +1333,16 @@ function createRagdoll(targetScene) {
     mfer.ragdollJointRefs.push(joint);
   }
 
-  // Apply uniform velocity to all bodies — they fall as a rigid unit until first impact
-  const initVel = { x: settings.launchSpeed * (0.75 + Math.random() * 0.5), y: -2, z: (Math.random() - 0.5) * 2 };
-  for (const body of Object.values(mfer.ragdollBodies)) {
-    body.setLinvel(initVel, true);
-    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-  }
-
   console.log(`Ragdoll created: ${Object.keys(mfer.ragdollBodies).length} bodies, ${mfer.ragdollJointRefs.length} joints`);
   return mfer;
+}
+
+function applyLaunchVelocity(mfer) {
+  const vel = { x: settings.launchSpeed * (0.75 + Math.random() * 0.5), y: -2, z: (Math.random() - 0.5) * 2 };
+  for (const body of Object.values(mfer.ragdollBodies)) {
+    body.setLinvel(vel, true);
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
 }
 
 // Reusable temp objects for bone sync
@@ -1345,73 +1377,176 @@ function syncRagdollBones(mfer) {
   }
 }
 
-function spawnAndDropMfer() {
-  if (!originalGltf) return;
+function getClickWorldPos(e) {
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  pointer.x = (clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
 
-  const cloned = SkeletonUtils.clone(originalGltf.scene);
-
-  // Set up meshes
-  cloned.traverse((child) => {
-    if (child.isMesh) {
-      child.visible = false;
-      child.castShadow = true;
-      child.receiveShadow = true;
-      child.frustumCulled = false;
-    }
-  });
-  applyRandomAppearance(cloned);
-
-  // Match scale and position of idle mfer
-  cloned.scale.setScalar(modelScale);
-  cloned.position.copy(originalPos);
-  cloned.position.y = settings.dropHeight;
-
-  // Save bone rest transforms for this clone
-  cloned.traverse((child) => {
-    if (child.isBone) {
-      child.userData.origPos = child.position.clone();
-      child.userData.origQuat = child.quaternion.clone();
-      child.userData.origScale = child.scale.clone();
-    }
-  });
-
-  scene.add(cloned);
-
-  const mfer = createRagdoll(cloned);
-  if (mfer) mfers.push(mfer);
+  // Intersect with horizontal plane at actual ground surface
+  const gy = LEVELS[currentLevelIndex].groundY ?? 1;
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy);
+  const hitPoint = new THREE.Vector3();
+  raycaster.ray.intersectPlane(plane, hitPoint);
+  return hitPoint;
 }
 
-function onDrop(e) {
-  if (e.target.id === 'reset-btn') return;
+function createGhostPreview() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0x4ecdc4, transparent: true, opacity: 0.3 });
+  // Simple humanoid silhouette: capsule body + sphere head
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 1.2, 4, 8), mat);
+  body.position.y = 1.0;
+  group.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), mat);
+  head.position.y = 1.9;
+  group.add(head);
+  group.visible = false;
+  scene.add(group);
+  return group;
+}
 
-  const curLevel = LEVELS[currentLevelIndex];
+function updateGhostPreview(e) {
+  if (gamePhase !== 'placing' || !ghostPreview) return;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  pointer.x = (clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const gy = LEVELS[currentLevelIndex].groundY ?? 1;
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy);
+  const hit = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(plane, hit)) {
+    ghostPreview.position.set(hit.x, hit.y, hit.z);
+    ghostPreview.visible = true;
+  }
+}
 
-  if (gltfScene && curLevel.keepIdleUntilImpact) {
-    // Level handles ragdoll creation (e.g. truck triggers it)
-    // Just show reset button and notify level
-  } else if (gltfScene) {
-    // First click: drop the idle mfer
-    if (mixer) mixer.stopAllAction();
-    const mfer = createRagdoll(gltfScene);
-    if (mfer) mfers.push(mfer);
-    gltfScene = null;
-    mixer = null;
-  } else {
-    // Subsequent clicks: spawn a new random mfer and drop it
-    spawnAndDropMfer();
+function spawnIdleMfer(worldPos) {
+  if (!originalGltf) return null;
+
+  const cloned = SkeletonUtils.clone(originalGltf.scene);
+  cloned.traverse((child) => {
+    if (child.isMesh) { child.visible = false; child.castShadow = true; child.receiveShadow = true; child.frustumCulled = false; }
+  });
+  applyRandomAppearance(cloned);
+  cloned.scale.setScalar(modelScale);
+  cloned.position.set(worldPos.x - modelCenter.x * modelScale, worldPos.y, worldPos.z - modelCenter.z * modelScale);
+
+  cloned.traverse((child) => {
+    if (child.isBone) { child.userData.origPos = child.position.clone(); child.userData.origQuat = child.quaternion.clone(); child.userData.origScale = child.scale.clone(); }
+  });
+  scene.add(cloned);
+
+  let idleMixer = null;
+  if (originalGltf.animations && originalGltf.animations.length > 0) {
+    idleMixer = new THREE.AnimationMixer(cloned);
+    const idle = originalGltf.animations.find(a => a.name.toLowerCase().includes('idle')) || originalGltf.animations[0];
+    if (idle) idleMixer.clipAction(idle).play();
   }
 
-  // Notify level of drop (e.g. starts the truck)
-  const level = LEVELS[currentLevelIndex];
-  if (level.onDrop && levelParts) level.onDrop(levelParts);
+  return { scene: cloned, mixer: idleMixer };
+}
+
+function activateAllMfers() {
+  const curLevel = LEVELS[currentLevelIndex];
+  const gy = curLevel.groundY ?? 1;
+
+  // Move initial idle mfer into placedMfers
+  if (gltfScene) {
+    placedMfers.push({ scene: gltfScene, mixer });
+    gltfScene = null;
+    mixer = null;
+  }
+
+  if (curLevel.keepIdleUntilImpact) {
+    // Keep all idle — level handles ragdoll on impact (e.g. truck)
+    return;
+  }
+
+  // Activate placed mfers
+  const staying = [];
+  for (const pm of placedMfers) {
+    const mferY = pm.scene.position.y;
+    if (mferY > gy + 1) {
+      // Above ground: convert to ragdoll and let it fall
+      if (pm.mixer) pm.mixer.stopAllAction();
+      const mfer = createRagdoll(pm.scene);
+      if (mfer) {
+        applyLaunchVelocity(mfer);
+        mfers.push(mfer);
+      }
+    } else {
+      // On ground: keep idle animation, add solid trigger capsule
+      // Mfer stays standing until something collides with it
+      const cx = pm.scene.position.x + modelCenter.x * modelScale;
+      const cz = pm.scene.position.z + modelCenter.z * modelScale;
+      const tb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(cx, gy + 1.25, cz));
+      const tc = world.createCollider(
+        RAPIER.ColliderDesc.capsule(0.8, 0.3).setRestitution(0.3).setFriction(0.5)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS), tb);
+      pm.triggerBody = tb;
+      pm.triggerHandle = tc.handle;
+      staying.push(pm);
+    }
+  }
+  placedMfers = staying;
+
+  // Notify level
+  if (curLevel.onDrop && levelParts) curLevel.onDrop(levelParts);
+}
+
+function onClick(e) {
+  if (e.target.closest('#controls, #level-select, #reset-btn, #go-btn, #toggle-controls')) return;
+
+  if (gamePhase === 'placing') {
+    // Place an idle mfer at click position
+    const worldPos = getClickWorldPos(e);
+    if (!worldPos) return;
+
+    // Move the initial idle mfer into placedMfers on first placement click
+    if (gltfScene) {
+      placedMfers.push({ scene: gltfScene, mixer });
+      gltfScene = null;
+      mixer = null;
+    }
+
+    const pm = spawnIdleMfer(worldPos);
+    if (pm) placedMfers.push(pm);
+
+    const count = placedMfers.length;
+    document.getElementById('instructions').textContent = `${count} mfer${count > 1 ? 's' : ''} placed — click to add more`;
+  } else {
+    // Playing phase: spawn and immediately ragdoll at click position
+    const worldPos = getClickWorldPos(e);
+    if (!worldPos) return;
+    const pm = spawnIdleMfer(worldPos);
+    if (pm) {
+      if (pm.mixer) pm.mixer.stopAllAction();
+      const mfer = createRagdoll(pm.scene);
+      if (mfer) mfers.push(mfer);
+    }
+  }
+}
+
+function onGo() {
+  gamePhase = 'playing';
+  if (ghostPreview) ghostPreview.visible = false;
+  document.getElementById('go-btn').style.display = 'none';
+  document.getElementById('reset-btn').style.display = 'block';
+  document.getElementById('instructions').textContent = '';
 
   settled = false;
   settledTimer = 0;
   impactScore = 0;
   maxVelocity = 0;
 
-  document.getElementById('instructions').textContent = '';
-  document.getElementById('reset-btn').style.display = 'block';
+  activateAllMfers();
+
+  // Notify level (e.g. starts the truck)
+  const level = LEVELS[currentLevelIndex];
+  if (level.onDrop && levelParts) level.onDrop(levelParts);
 }
 
 function reset() {
@@ -1434,6 +1569,15 @@ function reset() {
     scene.remove(mfer.scene);
   }
   mfers = [];
+
+  // Clean up placed idle mfers (including trigger bodies)
+  for (const pm of placedMfers) {
+    if (pm.mixer) pm.mixer.stopAllAction();
+    if (pm.triggerBody) world.removeRigidBody(pm.triggerBody);
+    scene.remove(pm.scene);
+  }
+  placedMfers = [];
+  gamePhase = 'placing';
 
   // Create fresh idle mfer
   if (originalGltf) {
@@ -1469,9 +1613,10 @@ function reset() {
   if (levelParts && levelParts.reset) levelParts.reset();
 
   settled = false;
-  document.getElementById('instructions').textContent = 'click to drop';
+  document.getElementById('instructions').textContent = 'click to place mfers, then go!';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('go-btn').style.display = 'block';
   const cam = LEVELS[currentLevelIndex].cameraStart;
   camera.position.set(...cam.pos);
   camera.lookAt(...cam.lookAt);
@@ -1527,6 +1672,7 @@ function animate() {
   lastTime = now;
 
   if (mixer && gltfScene) mixer.update(delta);
+  for (const pm of placedMfers) { if (pm.mixer) pm.mixer.update(delta); }
 
   // Step physics with event queue for collision detection
   world.step(eventQueue);
@@ -1585,9 +1731,11 @@ function animate() {
     }
   }
 
-  // Drain collision events — activate ragdolls + notify level
+  // Drain collision events — activate ragdolls + convert standing mfers on hit
+  const hitStanding = new Set();
   eventQueue.drainCollisionEvents((h1, h2, started) => {
     if (!started) return;
+    // Activate falling ragdolls (pre-impact → post-impact)
     for (const mfer of mfers) {
       if (mfer.ragdollActive) continue;
       mfer.ragdollActive = true;
@@ -1598,10 +1746,29 @@ function animate() {
       }
       detachAccessories(mfer);
     }
-    // Level-specific collision handling (e.g. truck hit detection)
+    // Check if any standing mfer's trigger capsule got hit
+    for (const pm of placedMfers) {
+      if (pm.triggerHandle !== undefined && (h1 === pm.triggerHandle || h2 === pm.triggerHandle)) {
+        hitStanding.add(pm);
+      }
+    }
+    // Level-specific collision handling
     const level = LEVELS[currentLevelIndex];
     if (level.onCollision && levelParts) level.onCollision(levelParts, h1, h2);
   });
+  // Convert hit standing mfers to ragdolls
+  for (const pm of hitStanding) {
+    world.removeRigidBody(pm.triggerBody);
+    if (pm.mixer) pm.mixer.stopAllAction();
+    const mfer = createRagdoll(pm.scene);
+    if (mfer) {
+      mfer.ragdollActive = true;
+      mfers.push(mfer);
+    }
+  }
+  if (hitStanding.size > 0) {
+    placedMfers = placedMfers.filter(pm => !hitStanding.has(pm));
+  }
 
   if (mfers.length > 0) {
     updateScore();

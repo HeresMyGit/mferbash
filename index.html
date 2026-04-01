@@ -42,8 +42,7 @@
     #reset-btn {
       position: absolute;
       bottom: 30px;
-      left: 50%;
-      transform: translateX(-50%);
+      right: 30px;
       padding: 12px 32px;
       font-size: 18px;
       font-family: monospace;
@@ -55,6 +54,26 @@
       z-index: 10;
       display: none;
     }
+    #go-btn {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 14px 40px;
+      font-size: 20px;
+      font-family: monospace;
+      font-weight: bold;
+      background: #4ecdc4;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      z-index: 10;
+      display: none;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    #go-btn:hover { background: #6ee6de; }
     #reset-btn:hover { background: #ff6b81; }
     #level-select {
       position: absolute;
@@ -113,7 +132,7 @@
 <body>
   <div id="ui">
     <div id="title">mfer bash</div>
-    <div id="instructions">click to drop</div>
+    <div id="instructions">click to place mfers</div>
     <div id="score" style="font-size: 48px; color: #e94560; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); margin-top: 8px;"></div>
   </div>
   <div id="level-select">
@@ -132,6 +151,7 @@
     <label><span>drop height</span><input type="range" id="sl-height" min="3" max="20" value="7" step="1"><span class="val" id="v-height">7</span></label>
     <button id="defaults-btn" style="margin-top:8px;width:100%;padding:4px;font-family:monospace;font-size:11px;background:#333;color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:4px;cursor:pointer;">defaults</button>
   </div>
+  <button id="go-btn">go!</button>
   <button id="reset-btn">reset</button>
   <script type="module" src="/src/main.js"></script>
 </body>
