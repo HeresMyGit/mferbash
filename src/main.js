@@ -538,6 +538,12 @@ let cameraMode = 'follow'; // 'follow' or 'free'
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let ghostPreview = null;
+let painting = false;
+let lastPaintPos = null;
+let lastPaintTime = 0;
+let paintedThisClick = false;
+const PAINT_MIN_DIST = 0.5;
+const PAINT_MIN_TIME = 250; // minimum world-space distance between painted mfers
 
 async function init() {
   await RAPIER.init();
@@ -603,8 +609,36 @@ async function init() {
   ghostPreview = createGhostPreview();
 
   window.addEventListener('resize', onResize);
+  window.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.shiftKey) return;
+    if (e.target.closest('#controls, #level-select, #reset-btn, #clear-btn, #go-btn, #toggle-controls, #cam-toggle, #cam-hint')) return;
+    painting = true;
+    lastPaintPos = null;
+  });
+  window.addEventListener('mousemove', (e) => {
+    updateGhostPreview(e);
+    if (painting && !e.shiftKey && gamePhase === 'placing') {
+      const worldPos = getClickWorldPos(e);
+      if (worldPos) {
+        const now = performance.now();
+        const far = !lastPaintPos || (lastPaintPos.distanceTo(worldPos) >= PAINT_MIN_DIST && now - lastPaintTime >= PAINT_MIN_TIME);
+        if (far) {
+          lastPaintPos = worldPos.clone();
+          lastPaintTime = performance.now();
+          const pm = spawnIdleMfer(worldPos);
+          if (pm) {
+            placedMfers.push(pm);
+            savedSpawns.push({ x: worldPos.x, y: worldPos.y, z: worldPos.z, rotY: 0 });
+          }
+          const count = placedMfers.length + (gltfScene ? 1 : 0);
+          document.getElementById('instructions').textContent = `${count} mfer${count > 1 ? 's' : ''} placed — click to add more`;
+          document.getElementById('go-btn').style.display = 'block';
+        }
+      }
+    }
+  });
+  window.addEventListener('mouseup', () => { painting = false; paintedThisClick = !!lastPaintPos; });
   window.addEventListener('click', onClick);
-  window.addEventListener('mousemove', updateGhostPreview);
   window.addEventListener('touchstart', (e) => { e.preventDefault(); onClick(e); }, { passive: false });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'd' || e.key === 'D') {
@@ -2354,6 +2388,7 @@ function activateAllMfers() {
 
 function onClick(e) {
   if (e.target.closest('#controls, #level-select, #reset-btn, #clear-btn, #go-btn, #toggle-controls, #cam-toggle, #cam-hint')) return;
+  if (paintedThisClick) { paintedThisClick = false; return; }
 
   if (gamePhase === 'placing') {
     let worldPos, rotY;
