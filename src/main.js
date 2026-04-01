@@ -15,22 +15,65 @@ const DEFAULT_MESHES = new Set([
   'smoke_cig_white', 'smoke',
 ]);
 
+// Ragdoll segment definitions: each maps a bone pair to a physics body
+const RAGDOLL_SEGMENTS = [
+  { name: 'hips',          bone: 'mixamorigHips',          child: 'mixamorigSpine',         radius: 0.12, mass: 3.0 },
+  { name: 'spine',         bone: 'mixamorigSpine',         child: 'mixamorigNeck',          radius: 0.11, mass: 3.0 },
+  { name: 'head',          bone: 'mixamorigNeck',          child: 'mixamorigHead',          radius: 0.16, mass: 1.5, shape: 'ball' },
+  { name: 'leftUpperArm',  bone: 'mixamorigLeftArm',       child: 'mixamorigLeftForeArm',   radius: 0.05, mass: 1.0 },
+  { name: 'leftForeArm',   bone: 'mixamorigLeftForeArm',   child: 'mixamorigLeftHand',      radius: 0.04, mass: 0.8 },
+  { name: 'rightUpperArm', bone: 'mixamorigRightArm',      child: 'mixamorigRightForeArm',  radius: 0.05, mass: 1.0 },
+  { name: 'rightForeArm',  bone: 'mixamorigRightForeArm',  child: 'mixamorigRightHand',     radius: 0.04, mass: 0.8 },
+  { name: 'leftUpperLeg',  bone: 'mixamorigLeftUpLeg',     child: 'mixamorigLeftLeg',       radius: 0.07, mass: 2.0 },
+  { name: 'leftLowerLeg',  bone: 'mixamorigLeftLeg',       child: 'mixamorigLeftFoot',      radius: 0.05, mass: 1.5 },
+  { name: 'rightUpperLeg', bone: 'mixamorigRightUpLeg',    child: 'mixamorigRightLeg',      radius: 0.07, mass: 2.0 },
+  { name: 'rightLowerLeg', bone: 'mixamorigRightLeg',      child: 'mixamorigRightFoot',     radius: 0.05, mass: 1.5 },
+];
+
+// Joints connecting ragdoll segments (order: parents before children)
+const RAGDOLL_JOINTS = [
+  { segA: 'hips',          segB: 'spine' },
+  { segA: 'spine',         segB: 'head' },
+  { segA: 'spine',         segB: 'leftUpperArm' },
+  { segA: 'spine',         segB: 'rightUpperArm' },
+  { segA: 'leftUpperArm',  segB: 'leftForeArm' },
+  { segA: 'rightUpperArm', segB: 'rightForeArm' },
+  { segA: 'hips',          segB: 'leftUpperLeg' },
+  { segA: 'hips',          segB: 'rightUpperLeg' },
+  { segA: 'leftUpperLeg',  segB: 'leftLowerLeg' },
+  { segA: 'rightUpperLeg', segB: 'rightLowerLeg' },
+];
+
+// Segment processing order (parents before children for bone sync)
+const SEGMENT_ORDER = [
+  'hips', 'spine', 'head',
+  'leftUpperArm', 'leftForeArm',
+  'rightUpperArm', 'rightForeArm',
+  'leftUpperLeg', 'leftLowerLeg',
+  'rightUpperLeg', 'rightLowerLeg',
+];
+
 let scene, camera, renderer;
 let world;
 let gltfScene, mixer;
-let mferBody; // single rigid body for the mfer
 let obstacleParts = []; // { body, mesh }
 let dropped = false;
 let modelScale = 1;
 let modelCenter = new THREE.Vector3();
-let modelBottomY = 0; // bounding box min Y in original (unscaled) space
+let modelBottomY = 0;
 let lastTime = performance.now();
 let originalPos = new THREE.Vector3();
 let impactScore = 0;
 let maxVelocity = 0;
-let bounceCount = 0;
 let settled = false;
 let settledTimer = 0;
+
+// Ragdoll state
+let ragdollBodies = {};       // { segName: RigidBody }
+let ragdollJointRefs = [];    // ImpulseJoint references
+let ragdollSegData = {};      // { segName: { bone, halfDist, localRotOffset } }
+let debugMeshes = [];         // wireframe physics helpers
+let showDebug = false;
 
 async function init() {
   await RAPIER.init();
@@ -70,7 +113,7 @@ async function init() {
   scene.add(rim);
 
   // Physics
-  world = new RAPIER.World({ x: 0, y: -15, z: 0 }); // slightly stronger gravity for fun
+  world = new RAPIER.World({ x: 0, y: -15, z: 0 });
 
   createGround();
   await loadModel();
@@ -78,6 +121,12 @@ async function init() {
   window.addEventListener('resize', onResize);
   window.addEventListener('click', onDrop);
   window.addEventListener('touchstart', onDrop);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'd' || e.key === 'D') {
+      showDebug = !showDebug;
+      for (const d of debugMeshes) d.mesh.visible = showDebug;
+    }
+  });
   document.getElementById('reset-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     reset();
@@ -104,7 +153,7 @@ function createGround() {
   const gb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0.5, 0));
   world.createCollider(RAPIER.ColliderDesc.cuboid(25, 0.5, 25).setRestitution(0.4).setFriction(0.6), gb);
 
-  // Stairs!
+  // Stairs
   const stairMat = new THREE.MeshStandardMaterial({ color: 0x0f3460, roughness: 0.7 });
   const stairCount = 8;
   const stepW = 3, stepH = 0.35, stepD = 0.6;
@@ -140,7 +189,7 @@ function createGround() {
   );
   world.createCollider(RAPIER.ColliderDesc.cuboid(1.5, 0.075, 1.25).setRestitution(0.6).setFriction(0.3), rb);
 
-  // Some dynamic boxes to crash into
+  // Dynamic boxes to crash into
   const boxMat = new THREE.MeshStandardMaterial({ color: 0x533483, roughness: 0.6 });
   for (let i = 0; i < 6; i++) {
     const s = 0.25 + Math.random() * 0.4;
@@ -177,6 +226,7 @@ async function loadModel() {
           child.visible = DEFAULT_MESHES.has(child.name);
           child.castShadow = true;
           child.receiveShadow = true;
+          child.frustumCulled = false;
         }
       });
 
@@ -242,51 +292,185 @@ async function loadModel() {
   });
 }
 
-function createMferBody() {
+function createRagdoll() {
   if (!gltfScene) return;
 
-  // Capsule sized to match the 2.5-unit-tall model
-  const targetHeight = 2.5;
-  const capsuleRadius = 0.3;
-  const capsuleHalfH = targetHeight / 2 - capsuleRadius; // total capsule = targetHeight
-  const pos = gltfScene.position;
+  // Ensure skeleton world matrices are current
+  gltfScene.updateMatrixWorld(true);
 
-  // Offset from model origin to capsule center:
-  // capsule center should be (halfH + radius) above the model's feet
-  // feet are at (modelBottomY * modelScale) above the model origin
-  const centerOffset = modelBottomY * modelScale + capsuleHalfH + capsuleRadius;
+  // Build bone lookup
+  const bones = {};
+  gltfScene.traverse((child) => {
+    if (child.isBone) bones[child.name] = child;
+  });
 
-  const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-    .setTranslation(pos.x, pos.y + centerOffset, pos.z)
-    .setLinearDamping(0.1)
-    .setAngularDamping(0.3)
-    .setCcdEnabled(true);
-  mferBody = world.createRigidBody(bodyDesc);
+  // Ragdoll self-collision prevention: member of group 0, filter = everything except group 0
+  const ragdollGroup = (0x0001 << 16) | 0xFFFE;
 
-  // Main body capsule
-  const capsule = RAPIER.ColliderDesc.capsule(capsuleHalfH, capsuleRadius)
-    .setMass(5)
-    .setRestitution(0.35)
-    .setFriction(0.4)
-    .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
-  world.createCollider(capsule, mferBody);
+  // Create physics bodies for each segment
+  for (const seg of RAGDOLL_SEGMENTS) {
+    const bone = bones[seg.bone];
+    const childBone = bones[seg.child];
+    if (!bone || !childBone) {
+      console.warn(`Missing bone for segment ${seg.name}: ${seg.bone} or ${seg.child}`);
+      continue;
+    }
 
-  // Head sphere (pokes out from top of capsule)
-  const headRadius = 0.2;
-  const head = RAPIER.ColliderDesc.ball(headRadius)
-    .setMass(1.5)
-    .setRestitution(0.5)
-    .setFriction(0.3)
-    .setTranslation(0, capsuleHalfH + headRadius, 0);
-  world.createCollider(head, mferBody);
+    // Get world positions of bone endpoints
+    const bonePos = new THREE.Vector3();
+    const childPos = new THREE.Vector3();
+    bone.getWorldPosition(bonePos);
+    childBone.getWorldPosition(childPos);
 
-  // Give a slight random spin for variety
-  const spinX = (Math.random() - 0.5) * 3;
-  const spinZ = (Math.random() - 0.5) * 2;
-  mferBody.setAngvel({ x: spinX, y: 0, z: spinZ }, true);
+    // Segment center and half-distance
+    const center = bonePos.clone().lerp(childPos, 0.5);
+    const halfDist = bonePos.distanceTo(childPos) / 2;
 
-  // Slight push toward the stairs
-  mferBody.setLinvel({ x: 1.5 + Math.random(), y: -2, z: (Math.random() - 0.5) * 2 }, true);
+    // Orient capsule Y axis along bone-to-child direction
+    const dir = childPos.clone().sub(bonePos).normalize();
+    const bodyQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+
+    // Compute rotation offset: maps physics body rotation back to bone rotation
+    // boneWorldQuat = bodyQuat_new * localRotOffset
+    // localRotOffset = inverse(bodyQuat_init) * boneWorldQuat_init
+    const boneWorldQuat = new THREE.Quaternion();
+    bone.getWorldQuaternion(boneWorldQuat);
+    const bodyQuatInv = bodyQuat.clone().invert();
+    const localRotOffset = bodyQuatInv.clone().multiply(boneWorldQuat);
+
+    // Create rigid body at segment center
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(center.x, center.y, center.z)
+      .setRotation({ x: bodyQuat.x, y: bodyQuat.y, z: bodyQuat.z, w: bodyQuat.w })
+      .setLinearDamping(0.3)
+      .setAngularDamping(0.5)
+      .setCcdEnabled(true);
+    const body = world.createRigidBody(bodyDesc);
+
+    // Create collider
+    let colliderDesc;
+    if (seg.shape === 'ball') {
+      colliderDesc = RAPIER.ColliderDesc.ball(seg.radius);
+    } else {
+      const capsuleHalfH = Math.max(halfDist - seg.radius, 0.02);
+      colliderDesc = RAPIER.ColliderDesc.capsule(capsuleHalfH, seg.radius);
+    }
+    colliderDesc
+      .setMass(seg.mass)
+      .setRestitution(0.3)
+      .setFriction(0.5)
+      .setCollisionGroups(ragdollGroup);
+    world.createCollider(colliderDesc, body);
+
+    ragdollBodies[seg.name] = body;
+    ragdollSegData[seg.name] = { bone, halfDist, localRotOffset };
+
+    // Debug wireframe visualization
+    let debugGeom;
+    if (seg.shape === 'ball') {
+      debugGeom = new THREE.SphereGeometry(seg.radius, 8, 8);
+    } else {
+      const capsuleHalfH = Math.max(halfDist - seg.radius, 0.02);
+      debugGeom = new THREE.CapsuleGeometry(seg.radius, capsuleHalfH * 2, 4, 8);
+    }
+    const debugMesh = new THREE.Mesh(debugGeom, new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true }));
+    debugMesh.visible = showDebug;
+    scene.add(debugMesh);
+    debugMeshes.push({ mesh: debugMesh, segName: seg.name });
+  }
+
+  // Create joints between segments
+  for (const jDef of RAGDOLL_JOINTS) {
+    const bodyA = ragdollBodies[jDef.segA];
+    const bodyB = ragdollBodies[jDef.segB];
+    if (!bodyA || !bodyB) continue;
+
+    const segDataB = ragdollSegData[jDef.segB];
+
+    // The shared connection point is segB's bone position
+    const sharedPos = new THREE.Vector3();
+    segDataB.bone.getWorldPosition(sharedPos);
+
+    // Compute anchor in body A's local frame
+    const posA = bodyA.translation();
+    const rotA = bodyA.rotation();
+    const quatA = new THREE.Quaternion(rotA.x, rotA.y, rotA.z, rotA.w);
+    const quatAInv = quatA.clone().invert();
+    const anchorA = new THREE.Vector3(sharedPos.x - posA.x, sharedPos.y - posA.y, sharedPos.z - posA.z)
+      .applyQuaternion(quatAInv);
+
+    // Compute anchor in body B's local frame
+    const posB = bodyB.translation();
+    const rotB = bodyB.rotation();
+    const quatB = new THREE.Quaternion(rotB.x, rotB.y, rotB.z, rotB.w);
+    const quatBInv = quatB.clone().invert();
+    const anchorB = new THREE.Vector3(sharedPos.x - posB.x, sharedPos.y - posB.y, sharedPos.z - posB.z)
+      .applyQuaternion(quatBInv);
+
+    const jointData = RAPIER.JointData.spherical(
+      { x: anchorA.x, y: anchorA.y, z: anchorA.z },
+      { x: anchorB.x, y: anchorB.y, z: anchorB.z }
+    );
+    const joint = world.createImpulseJoint(jointData, bodyA, bodyB, true);
+    ragdollJointRefs.push(joint);
+  }
+
+  // Initial impulse on hips
+  const hipsBody = ragdollBodies['hips'];
+  if (hipsBody) {
+    hipsBody.setAngvel({ x: (Math.random() - 0.5) * 3, y: 0, z: (Math.random() - 0.5) * 2 }, true);
+    hipsBody.setLinvel({ x: 1.5 + Math.random(), y: -2, z: (Math.random() - 0.5) * 2 }, true);
+  }
+
+  console.log(`Ragdoll created: ${Object.keys(ragdollBodies).length} bodies, ${ragdollJointRefs.length} joints`);
+}
+
+function syncRagdollBones() {
+  if (!gltfScene || Object.keys(ragdollBodies).length === 0) return;
+
+  // Reusable temp objects
+  const targetPos = new THREE.Vector3();
+  const targetQuat = new THREE.Quaternion();
+  const bodyQuatThree = new THREE.Quaternion();
+  const offset = new THREE.Vector3();
+  const parentInv = new THREE.Matrix4();
+  const desiredWorld = new THREE.Matrix4();
+  const localMat = new THREE.Matrix4();
+  const lp = new THREE.Vector3();
+  const lq = new THREE.Quaternion();
+  const ls = new THREE.Vector3();
+  const scaleVec = new THREE.Vector3(modelScale, modelScale, modelScale);
+
+  for (const segName of SEGMENT_ORDER) {
+    const body = ragdollBodies[segName];
+    const seg = ragdollSegData[segName];
+    if (!body || !seg) continue;
+
+    const p = body.translation();
+    const r = body.rotation();
+    bodyQuatThree.set(r.x, r.y, r.z, r.w);
+
+    // Bone position = body center + offset to bone end (in body local, bone is at -halfDist along Y)
+    offset.set(0, -seg.halfDist, 0).applyQuaternion(bodyQuatThree);
+    targetPos.set(p.x + offset.x, p.y + offset.y, p.z + offset.z);
+
+    // Bone rotation = bodyQuat * localRotOffset
+    targetQuat.copy(bodyQuatThree).multiply(seg.localRotOffset);
+
+    // Compute local transform from desired world transform
+    // Use scale=modelScale so decomposed bone scale comes out as ~1
+    parentInv.copy(seg.bone.parent.matrixWorld).invert();
+    desiredWorld.compose(targetPos, targetQuat, scaleVec);
+    localMat.multiplyMatrices(parentInv, desiredWorld);
+    localMat.decompose(lp, lq, ls);
+
+    seg.bone.position.copy(lp);
+    seg.bone.quaternion.copy(lq);
+    // Don't touch bone.scale - decomposed scale should be ~1
+
+    // Update this bone and descendants so child segments have correct parent matrixWorld
+    seg.bone.updateMatrixWorld(true);
+  }
 }
 
 function onDrop(e) {
@@ -297,22 +481,35 @@ function onDrop(e) {
   settledTimer = 0;
   impactScore = 0;
   maxVelocity = 0;
-  bounceCount = 0;
 
   if (mixer) mixer.stopAllAction();
-  createMferBody();
+  createRagdoll();
 
   document.getElementById('instructions').textContent = '';
   document.getElementById('reset-btn').style.display = 'block';
 }
 
 function reset() {
-  // Clean up
-  if (mferBody) {
-    world.removeRigidBody(mferBody);
-    mferBody = null;
+  // Clean up ragdoll bodies
+  for (const joint of ragdollJointRefs) {
+    world.removeImpulseJoint(joint, true);
   }
+  for (const body of Object.values(ragdollBodies)) {
+    world.removeRigidBody(body);
+  }
+  ragdollBodies = {};
+  ragdollJointRefs = [];
+  ragdollSegData = {};
 
+  // Clean up debug meshes
+  for (const d of debugMeshes) {
+    scene.remove(d.mesh);
+    d.mesh.geometry.dispose();
+    d.mesh.material.dispose();
+  }
+  debugMeshes = [];
+
+  // Restore model
   if (gltfScene) {
     gltfScene.position.copy(originalPos);
     gltfScene.rotation.set(0, 0, 0);
@@ -347,19 +544,27 @@ function onResize() {
 }
 
 function updateScore() {
-  if (!mferBody) return;
+  const hipsBody = ragdollBodies['hips'];
+  if (!hipsBody) return;
 
-  const vel = mferBody.linvel();
-  const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-  maxVelocity = Math.max(maxVelocity, speed);
-
-  // Score based on max velocity + angular chaos
-  const angvel = mferBody.angvel();
-  const spin = Math.sqrt(angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
-  impactScore = Math.round(maxVelocity * 100 + spin * 50);
+  // Aggregate velocity across all bodies for richer scoring
+  let totalSpeed = 0;
+  let totalSpin = 0;
+  let count = 0;
+  for (const body of Object.values(ragdollBodies)) {
+    const v = body.linvel();
+    const a = body.angvel();
+    totalSpeed += Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    totalSpin += Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    count++;
+  }
+  const avgSpeed = totalSpeed / count;
+  const avgSpin = totalSpin / count;
+  maxVelocity = Math.max(maxVelocity, avgSpeed);
+  impactScore = Math.round(maxVelocity * 100 + avgSpin * 50);
 
   // Check if settled
-  if (speed < 0.1 && spin < 0.1) {
+  if (avgSpeed < 0.15 && avgSpin < 0.15) {
     settledTimer += 1 / 60;
     if (settledTimer > 1.5 && !settled) {
       settled = true;
@@ -383,10 +588,10 @@ function animate() {
 
   if (mixer && !dropped) mixer.update(delta);
 
-  // Always step physics
+  // Step physics
   world.step();
 
-  // Sync obstacles
+  // Sync obstacle meshes to physics
   for (const { mesh, body } of obstacleParts) {
     const p = body.translation();
     const r = body.rotation();
@@ -394,32 +599,37 @@ function animate() {
     mesh.quaternion.set(r.x, r.y, r.z, r.w);
   }
 
-  if (dropped && mferBody && gltfScene) {
-    const pos = mferBody.translation();
-    const rot = mferBody.rotation();
+  if (dropped && Object.keys(ragdollBodies).length > 0) {
+    // Sync ragdoll bones to physics bodies
+    syncRagdollBones();
 
-    // Sync model to physics body (reverse the centerOffset used when creating the body)
-    const syncOffset = modelBottomY * modelScale + 1.25; // capsuleHalfH(0.95) + capsuleRadius(0.3)
-    gltfScene.position.set(
-      pos.x,
-      pos.y - syncOffset,
-      pos.z
-    );
-    gltfScene.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+    // Sync debug wireframes
+    for (const d of debugMeshes) {
+      const body = ragdollBodies[d.segName];
+      if (!body) continue;
+      const p = body.translation();
+      const r = body.rotation();
+      d.mesh.position.set(p.x, p.y, p.z);
+      d.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    }
 
     updateScore();
 
-    // Camera follow with smooth tracking
-    const vel = mferBody.linvel();
-    const lookAheadX = vel.x * 0.15; // lead the camera in the direction of travel
-    const camTargetX = pos.x + 3 + lookAheadX;
-    const camTargetY = Math.max(pos.y + 3.5, 3);
-    const camTargetZ = pos.z + 10; // track Z so sideways motion stays visible
+    // Camera follows hips
+    const hipsBody = ragdollBodies['hips'];
+    if (hipsBody) {
+      const pos = hipsBody.translation();
+      const vel = hipsBody.linvel();
+      const lookAheadX = vel.x * 0.15;
+      const camTargetX = pos.x + 3 + lookAheadX;
+      const camTargetY = Math.max(pos.y + 3.5, 3);
+      const camTargetZ = pos.z + 10;
 
-    camera.position.x += (camTargetX - camera.position.x) * 0.08;
-    camera.position.y += (camTargetY - camera.position.y) * 0.1;
-    camera.position.z += (camTargetZ - camera.position.z) * 0.08;
-    camera.lookAt(pos.x, pos.y, pos.z);
+      camera.position.x += (camTargetX - camera.position.x) * 0.08;
+      camera.position.y += (camTargetY - camera.position.y) * 0.1;
+      camera.position.z += (camTargetZ - camera.position.z) * 0.08;
+      camera.lookAt(pos.x, pos.y, pos.z);
+    }
   }
 
   renderer.render(scene, camera);
