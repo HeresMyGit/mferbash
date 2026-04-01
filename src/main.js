@@ -2370,7 +2370,13 @@ function activateAllMfers() {
 
   // Move initial idle mfer into placedMfers
   if (gltfScene) {
-    placedMfers.push({ scene: gltfScene, mixer });
+    const ix = gltfScene.position.x + modelCenter.x * modelScale;
+    const iy = gltfScene.position.y;
+    const iz = gltfScene.position.z + modelCenter.z * modelScale;
+    if (!savedSpawns.some(s => s.isLauncher)) {
+      savedSpawns.unshift({ x: ix, y: iy, z: iz, rotY: gltfScene.rotation.y, isLauncher: true });
+    }
+    placedMfers.push({ scene: gltfScene, mixer, isLauncher: true });
     gltfScene = null;
     mixer = null;
   }
@@ -2383,25 +2389,25 @@ function activateAllMfers() {
   // Activate placed mfers
   const staying = [];
   for (const pm of placedMfers) {
-    const mferY = pm.scene.position.y;
-    if (mferY > gy + 1) {
-      // Above ground: convert to ragdoll and let it fall
+    if (pm.isLauncher) {
+      // The initial mfer — launch it (e.g. down the stairs)
       if (pm.mixer) pm.mixer.stopAllAction();
       const mfer = createRagdoll(pm.scene);
       if (mfer) {
         applyLaunchVelocity(mfer);
         mfer.ragdollActive = true;
-        mfer.detachAfter = performance.now() + 400; // detach after 400ms of falling
+        mfer.detachAfter = performance.now() + 400;
         mfers.push(mfer);
       }
     } else {
       // On ground: keep idle animation, add solid trigger capsule
       // Mfer stays standing until something collides with it
       const cx = pm.scene.position.x + modelCenter.x * modelScale;
+      const cy = pm.scene.position.y + 1.25; // center of mfer at its actual height
       const cz = pm.scene.position.z + modelCenter.z * modelScale;
-      const tb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(cx, gy + 1.25, cz));
+      const tb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy, cz));
       const tc = world.createCollider(
-        RAPIER.ColliderDesc.capsule(0.8, 0.3).setRestitution(0.3).setFriction(0.5)
+        RAPIER.ColliderDesc.capsule(0.5, 0.2).setRestitution(0.3).setFriction(0.5)
           .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS), tb);
       pm.triggerBody = tb;
       pm.triggerHandle = tc.handle;
@@ -2435,8 +2441,8 @@ function onClick(e) {
       const ix = gltfScene.position.x + modelCenter.x * modelScale;
       const iy = gltfScene.position.y;
       const iz = gltfScene.position.z + modelCenter.z * modelScale;
-      savedSpawns.push({ x: ix, y: iy, z: iz, rotY: gltfScene.rotation.y });
-      placedMfers.push({ scene: gltfScene, mixer });
+      savedSpawns.push({ x: ix, y: iy, z: iz, rotY: gltfScene.rotation.y, isLauncher: true });
+      placedMfers.push({ scene: gltfScene, mixer, isLauncher: true });
       gltfScene = null;
       mixer = null;
     }
@@ -2509,7 +2515,10 @@ function reset() {
   // Re-create all mfers at their saved spawn positions
   for (const sp of savedSpawns) {
     const pm = spawnIdleMfer({ x: sp.x, y: sp.y, z: sp.z }, sp.rotY);
-    if (pm) placedMfers.push(pm);
+    if (pm) {
+      if (sp.isLauncher) pm.isLauncher = true;
+      placedMfers.push(pm);
+    }
   }
 
   // Create the default idle mfer if no saved spawns (first load)
@@ -2762,7 +2771,20 @@ function animate() {
     // Level-specific collision handling
     if (currentLevel.onCollision && levelParts) currentLevel.onCollision(levelParts, h1, h2);
   });
-  // Convert hit standing mfers to ragdolls
+
+  // Proximity-based standing mfer activation (backup for collision events)
+  for (const mfer of mfers) {
+    const hipsBody = mfer.ragdollBodies['hips'];
+    if (!hipsBody) continue;
+    const hp = hipsBody.translation();
+    for (const pm of placedMfers) {
+      if (!pm.triggerBody || hitStanding.has(pm)) continue;
+      const tp = pm.triggerBody.translation();
+      const dist = Math.sqrt((hp.x - tp.x) ** 2 + (hp.y - tp.y) ** 2 + (hp.z - tp.z) ** 2);
+      if (dist < 1.0) hitStanding.add(pm);
+    }
+  }
+
   for (const pm of hitStanding) {
     world.removeRigidBody(pm.triggerBody);
     if (pm.mixer) pm.mixer.stopAllAction();
