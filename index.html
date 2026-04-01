@@ -56,6 +56,26 @@
       display: none;
     }
     #reset-btn:hover { background: #ff6b81; }
+    #level-select {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      display: flex;
+      gap: 4px;
+    }
+    .level-btn {
+      background: rgba(0,0,0,0.5);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 4px;
+      padding: 5px 12px;
+      font-family: monospace;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .level-btn.active { background: #e94560; border-color: #e94560; }
+    .level-btn:hover:not(.active) { background: rgba(255,255,255,0.1); }
     #controls {
       position: absolute;
       top: 20px;
@@ -95,6 +115,10 @@
     <div id="title">mfer bash</div>
     <div id="instructions">click to drop</div>
     <div id="score" style="font-size: 48px; color: #e94560; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); margin-top: 8px;"></div>
+  </div>
+  <div id="level-select">
+    <button class="level-btn active" data-level="0">stairs</button>
+    <button class="level-btn" data-level="1">truck hit</button>
   </div>
   <div id="loading">loading mfer...</div>
   <button id="toggle-controls">settings</button>

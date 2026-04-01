@@ -345,6 +345,120 @@ function applyRandomAppearance(targetScene) {
   });
 }
 
+// Map accessory mesh names to which ragdoll segment drives their velocity when detached
+function getDetachSegment(name) {
+  if (name.startsWith('headphones'))  return 'head';
+  if (name.startsWith('eyes_glasses') || name.startsWith('eyes_vr') || name.startsWith('eyes_eye') ||
+      name.startsWith('eyes_glases_3d') || name.startsWith('eyes_glasses_3d')) return 'head';
+  if (name.startsWith('hat_') || name.startsWith('cap_') || name.startsWith('headband_')) return 'head';
+  if (name.startsWith('smoke'))       return 'head';
+  if (name.startsWith('watch_'))      return 'leftForeArm';
+  if (name.startsWith('chain_'))      return 'spine';
+  if (name.startsWith('beard'))       return 'head';
+  if (name.startsWith('hair_'))       return 'head';
+  if (name.startsWith('shirt_hoodie_up')) return 'head';
+  if (name.startsWith('larmf'))       return 'head'; // larva mfer hat
+  return null; // body, type, eyes (actual eyeballs), mouth — don't detach
+}
+
+function detachAccessories(mfer) {
+  const toDetach = [];
+  mfer.scene.traverse((child) => {
+    if (child.isMesh && child.visible && getDetachSegment(child.name)) {
+      toDetach.push(child);
+    }
+  });
+
+  if (!mfer.detachedPieces) mfer.detachedPieces = [];
+
+  for (const mesh of toDetach) {
+    const segName = getDetachSegment(mesh.name);
+    mesh.visible = false;
+
+    // Bake the skinned geometry at its current pose
+    let bakedGeo;
+    if (mesh.isSkinnedMesh && mesh.skeleton) {
+      bakedGeo = mesh.geometry.clone();
+      const srcPos = mesh.geometry.attributes.position;
+      const dstPos = bakedGeo.attributes.position;
+      const v = new THREE.Vector3();
+      for (let i = 0; i < srcPos.count; i++) {
+        v.fromBufferAttribute(srcPos, i);
+        mesh.applyBoneTransform(i, v);
+        dstPos.setXYZ(i, v.x, v.y, v.z);
+      }
+      dstPos.needsUpdate = true;
+    } else {
+      bakedGeo = mesh.geometry.clone();
+    }
+    bakedGeo.computeBoundingBox();
+    bakedGeo.computeBoundingSphere();
+
+    // Center the geometry at origin so physics rotation works correctly
+    const localCenter = new THREE.Vector3();
+    bakedGeo.boundingBox.getCenter(localCenter);
+    const pos = bakedGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setXYZ(i, pos.getX(i) - localCenter.x, pos.getY(i) - localCenter.y, pos.getZ(i) - localCenter.z);
+    }
+    pos.needsUpdate = true;
+    bakedGeo.computeBoundingSphere();
+
+    // Get world-space center and orientation
+    const worldCenter = localCenter.applyMatrix4(mesh.matrixWorld);
+    const wPos = new THREE.Vector3(), wQuat = new THREE.Quaternion(), wScale = new THREE.Vector3();
+    mesh.matrixWorld.decompose(wPos, wQuat, wScale);
+
+    // Create the detached mesh
+    const detached = new THREE.Mesh(bakedGeo, mesh.material);
+    detached.position.copy(worldCenter);
+    detached.quaternion.copy(wQuat);
+    detached.scale.copy(wScale);
+    detached.castShadow = true;
+    detached.frustumCulled = false;
+    scene.add(detached);
+
+    // Physics body with a small box collider
+    const bboxSize = new THREE.Vector3();
+    mesh.geometry.boundingBox || mesh.geometry.computeBoundingBox();
+    mesh.geometry.boundingBox.getSize(bboxSize);
+    bboxSize.multiplyScalar(0.5 * modelScale);
+    const hx = Math.max(bboxSize.x, 0.02), hy = Math.max(bboxSize.y, 0.02), hz = Math.max(bboxSize.z, 0.02);
+
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(worldCenter.x, worldCenter.y, worldCenter.z)
+      .setRotation({ x: wQuat.x, y: wQuat.y, z: wQuat.z, w: wQuat.w })
+      .setLinearDamping(0.2)
+      .setAngularDamping(0.3);
+    const body = world.createRigidBody(bodyDesc);
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(hx, hy, hz).setMass(0.3).setRestitution(0.5).setFriction(0.4),
+      body
+    );
+
+    // Inherit velocity from the associated body part + random pop
+    const segBody = mfer.ragdollBodies[segName];
+    if (segBody) {
+      const sv = segBody.linvel();
+      const sa = segBody.angvel();
+      body.setLinvel({
+        x: sv.x + (Math.random() - 0.5) * 4,
+        y: sv.y + Math.random() * 4 + 2,
+        z: sv.z + (Math.random() - 0.5) * 4,
+      }, true);
+      body.setAngvel({
+        x: sa.x + (Math.random() - 0.5) * 10,
+        y: sa.y + (Math.random() - 0.5) * 10,
+        z: sa.z + (Math.random() - 0.5) * 10,
+      }, true);
+    }
+
+    mfer.detachedPieces.push({ mesh: detached, body, geo: bakedGeo });
+  }
+
+  if (toDetach.length > 0) console.log(`Detached ${toDetach.length} accessories`);
+}
+
 // Ragdoll segment definitions: each maps a bone pair to a physics body
 const RAGDOLL_SEGMENTS = [
   { name: 'hips',          bone: 'mixamorigHips',          child: 'mixamorigSpine',         radius: 0.12, mass: 3.0 },
@@ -387,7 +501,6 @@ let scene, camera, renderer;
 let world;
 let gltfScene, mixer;       // the idle display mfer
 let originalGltf = null;     // stored for cloning new mfers
-let obstacleParts = [];
 let modelScale = 1;
 let modelCenter = new THREE.Vector3();
 let modelBottomY = 0;
@@ -400,7 +513,11 @@ let settledTimer = 0;
 let showDebug = false;
 let eventQueue;
 
-// All dropped mfers (each has: scene, ragdollBodies, ragdollJointRefs, ragdollSegData, ragdollActive, debugMeshes)
+// Level system
+let levelParts = null;       // { staticBodies, staticMeshes, dynamicParts, helpers, animatedObjects, reset?, dispose? }
+let currentLevelIndex = 0;
+
+// All dropped mfers
 let mfers = [];
 
 async function init() {
@@ -444,7 +561,7 @@ async function init() {
   world = new RAPIER.World({ x: 0, y: -settings.gravity, z: 0 });
   eventQueue = new RAPIER.EventQueue(true);
 
-  createGround();
+  levelParts = LEVELS[0].build();
   await loadModel();
 
   window.addEventListener('resize', onResize);
@@ -500,6 +617,7 @@ async function init() {
   document.getElementById('defaults-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     Object.assign(settings, DEFAULTS);
+    if (LEVELS[currentLevelIndex].settingsOverrides) Object.assign(settings, LEVELS[currentLevelIndex].settingsOverrides);
     for (const sl of sliders) {
       const input = document.getElementById(`sl-${sl.id}`);
       const valEl = document.getElementById(`v-${sl.id}`);
@@ -510,84 +628,468 @@ async function init() {
     }
   });
 
+  // Level selector
+  document.querySelectorAll('.level-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      switchLevel(parseInt(btn.dataset.level));
+    });
+  });
+
   document.getElementById('loading').style.display = 'none';
   animate();
 }
 
-function createGround() {
-  // Main ground
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(50, 50),
-    new THREE.MeshStandardMaterial({ color: 0x16213e, roughness: 0.8, metalness: 0.2 })
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  scene.add(ground);
+// ======== LEVEL SYSTEM ========
 
-  const grid = new THREE.GridHelper(50, 50, 0x0f3460, 0x0f3460);
-  grid.position.y = 0.01;
-  scene.add(grid);
+function addBox(p, pos, size, color, opts = {}) {
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: opts.roughness ?? 0.7, ...(opts.emissive ? { emissive: opts.emissive, emissiveIntensity: opts.emissiveIntensity ?? 1 } : {}) });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), mat);
+  mesh.position.set(pos.x, pos.y, pos.z);
+  if (opts.rotZ) mesh.rotation.z = opts.rotZ;
+  if (opts.rotX) mesh.rotation.x = opts.rotX;
+  mesh.castShadow = !opts.noShadow;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  p.staticMeshes.push(mesh);
+  if (!opts.noPhysics) {
+    const desc = RAPIER.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z);
+    if (opts.rotZ) desc.setRotation({ x: 0, y: 0, z: Math.sin(opts.rotZ / 2), w: Math.cos(opts.rotZ / 2) });
+    const body = world.createRigidBody(desc);
+    world.createCollider(RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
+      .setRestitution(opts.restitution ?? 0.3).setFriction(opts.friction ?? 0.5), body);
+    p.staticBodies.push(body);
+  }
+  return mesh;
+}
 
-  const gb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0.5, 0));
-  world.createCollider(RAPIER.ColliderDesc.cuboid(25, 0.5, 25).setRestitution(0.4).setFriction(0.6), gb);
+function addDynamicBox(p, pos, size, color, mass = 1.5) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+  mesh.position.set(pos.x, pos.y, pos.z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  const bb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setLinearDamping(0.3).setAngularDamping(0.3));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(size / 2, size / 2, size / 2).setMass(mass).setRestitution(0.4).setFriction(0.5), bb);
+  p.dynamicParts.push({ mesh, body: bb });
+}
 
-  // Stairs
-  const stairMat = new THREE.MeshStandardMaterial({ color: 0x0f3460, roughness: 0.7 });
-  const stairCount = 8;
-  const stepW = 3, stepH = 0.35, stepD = 0.6;
-  for (let i = 0; i < stairCount; i++) {
-    const x = -1 + i * stepD * 0.8;
-    const y = (stairCount - i) * stepH;
-    const stair = new THREE.Mesh(new THREE.BoxGeometry(stepW, stepH, stepD), stairMat);
-    stair.position.set(x, y, 0);
-    stair.castShadow = true;
-    stair.receiveShadow = true;
-    scene.add(stair);
+// ---- LEVEL 1: STAIR DISMOUNT ----
 
-    const sb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, 0));
-    world.createCollider(RAPIER.ColliderDesc.cuboid(stepW / 2, stepH / 2, stepD / 2).setRestitution(0.3).setFriction(0.5), sb);
+function createStairLevel() {
+  return {
+    name: 'stairs',
+    spawnPos: { x: -1, y: 7, z: 0 },
+    cameraStart: { pos: [0, 6, 14], lookAt: [0, 4, 0] },
+
+    build() {
+      const p = { staticBodies: [], staticMeshes: [], dynamicParts: [], helpers: [], animatedObjects: [] };
+
+      // Ground
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(50, 50),
+        new THREE.MeshStandardMaterial({ color: 0x16213e, roughness: 0.8, metalness: 0.2 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+      p.staticMeshes.push(ground);
+
+      const grid = new THREE.GridHelper(50, 50, 0x0f3460, 0x0f3460);
+      grid.position.y = 0.01;
+      scene.add(grid);
+      p.helpers.push(grid);
+
+      const gb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0.5, 0));
+      world.createCollider(RAPIER.ColliderDesc.cuboid(25, 0.5, 25).setRestitution(0.4).setFriction(0.6), gb);
+      p.staticBodies.push(gb);
+
+      // Stairs
+      const stairCount = 8, stepW = 3, stepH = 0.35, stepD = 0.6;
+      for (let i = 0; i < stairCount; i++) {
+        addBox(p, { x: -1 + i * stepD * 0.8, y: (stairCount - i) * stepH, z: 0 },
+          { x: stepW, y: stepH, z: stepD }, 0x0f3460);
+      }
+
+      // Ramp
+      addBox(p, { x: 5, y: 0.3, z: 0 }, { x: 3, y: 0.15, z: 2.5 }, 0xe94560,
+        { rotZ: -0.25, roughness: 0.5, restitution: 0.6, friction: 0.3 });
+
+      // Dynamic boxes
+      for (let i = 0; i < 6; i++) {
+        const s = 0.25 + Math.random() * 0.4;
+        addDynamicBox(p, { x: 3 + Math.random() * 4, y: s / 2 + (Math.random() > 0.5 ? 0.35 : 0), z: -1.5 + Math.random() * 3 }, s, 0x533483);
+      }
+
+      return p;
+    },
+  };
+}
+
+// ---- LEVEL 2: TRUCK HIT ----
+
+function createTruckHitLevel() {
+  return {
+    name: 'truck hit',
+    spawnPos: { x: 0, y: 1, z: 0 },
+    cameraStart: { pos: [5, 4, 12], lookAt: [0, 1, 0] },
+    settingsOverrides: { launchSpeed: 0, dropHeight: 1 },
+    keepIdleUntilImpact: true,
+
+    build() {
+      const p = { staticBodies: [], staticMeshes: [], dynamicParts: [], helpers: [], animatedObjects: [] };
+
+      // Ground plane
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 40),
+        new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+      p.staticMeshes.push(ground);
+
+      const gb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0.5, 0));
+      world.createCollider(RAPIER.ColliderDesc.cuboid(40, 0.5, 20).setRestitution(0.3).setFriction(0.7), gb);
+      p.staticBodies.push(gb);
+
+      // Road surface
+      const road = new THREE.Mesh(new THREE.PlaneGeometry(60, 6),
+        new THREE.MeshStandardMaterial({ color: 0x333338, roughness: 0.85 }));
+      road.rotation.x = -Math.PI / 2;
+      road.position.set(0, 1.02, 0);
+      road.receiveShadow = true;
+      scene.add(road);
+      p.staticMeshes.push(road);
+
+      // Lane markings — dashed yellow center line
+      for (let x = -28; x < 30; x += 3) {
+        const dash = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.02, 0.12),
+          new THREE.MeshStandardMaterial({ color: 0xddcc00, emissive: 0x443300, emissiveIntensity: 0.3 }));
+        dash.position.set(x, 1.03, 0);
+        scene.add(dash);
+        p.staticMeshes.push(dash);
+      }
+
+      // Edge lines — solid white
+      for (const z of [-2.9, 2.9]) {
+        const edge = new THREE.Mesh(new THREE.BoxGeometry(60, 0.02, 0.1),
+          new THREE.MeshStandardMaterial({ color: 0xffffff }));
+        edge.position.set(0, 1.03, z);
+        scene.add(edge);
+        p.staticMeshes.push(edge);
+      }
+
+      // Sidewalks
+      for (const z of [-4.5, 4.5]) {
+        addBox(p, { x: 0, y: 1.1, z }, { x: 60, y: 0.2, z: 2.5 }, 0x555555, { roughness: 0.9, friction: 0.7 });
+      }
+      // Curbs
+      for (const z of [-3.15, 3.15]) {
+        addBox(p, { x: 0, y: 1.15, z }, { x: 60, y: 0.3, z: 0.15 }, 0x666666, { friction: 0.6 });
+      }
+
+      // Buildings backdrop
+      const buildingColors = [0x2a2a3e, 0x1e1e30, 0x252540];
+      for (let i = 0; i < 4; i++) {
+        const h = 6 + Math.random() * 8;
+        const w = 4 + Math.random() * 3;
+        addBox(p, { x: -12 + i * 9 + Math.random() * 2, y: h / 2 + 1, z: -7.5 }, { x: w, y: h, z: 3 },
+          buildingColors[i % 3], { noPhysics: true, roughness: 0.95 });
+      }
+
+      // Windows on buildings (emissive rectangles)
+      for (let i = 0; i < 4; i++) {
+        const bx = -12 + i * 9 + Math.random() * 2;
+        for (let wy = 3; wy < 10; wy += 2) {
+          for (let wx = -1.2; wx <= 1.2; wx += 1.2) {
+            if (Math.random() > 0.3) {
+              const win = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.05),
+                new THREE.MeshStandardMaterial({ color: 0x88aacc, emissive: 0x88aacc, emissiveIntensity: 0.4 + Math.random() * 0.4 }));
+              win.position.set(bx + wx, wy, -5.9);
+              scene.add(win);
+              p.staticMeshes.push(win);
+            }
+          }
+        }
+      }
+
+      // Traffic light
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.12, 4, 0.12), poleMat);
+      pole.position.set(4, 3, -3.2);
+      pole.castShadow = true;
+      scene.add(pole);
+      p.staticMeshes.push(pole);
+
+      const lightBox = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.9, 0.35),
+        new THREE.MeshStandardMaterial({ color: 0x222222 }));
+      lightBox.position.set(4, 5.2, -3.2);
+      scene.add(lightBox);
+      p.staticMeshes.push(lightBox);
+
+      const lightColors = [0xff0000, 0xffaa00, 0x00ff00];
+      const trafficLights = [];
+      for (let i = 0; i < 3; i++) {
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8),
+          new THREE.MeshStandardMaterial({ color: lightColors[i], emissive: i === 2 ? lightColors[i] : 0x000000, emissiveIntensity: 0.8 }));
+        bulb.position.set(4, 5.5 - i * 0.3, -3.0);
+        scene.add(bulb);
+        p.staticMeshes.push(bulb);
+        trafficLights.push(bulb);
+      }
+
+      // Parked cars (dynamic — will get hit)
+      const carColors = [0x3366cc, 0xcc3333];
+      for (let i = 0; i < 2; i++) {
+        const cx = 6 + i * 5;
+        // Car body
+        const carBody = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.8, 1.4),
+          new THREE.MeshStandardMaterial({ color: carColors[i], roughness: 0.4, metalness: 0.3 }));
+        carBody.position.set(cx, 1.5, 1.8);
+        carBody.castShadow = true;
+        scene.add(carBody);
+        const carPhys = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(cx, 1.5, 1.8).setLinearDamping(0.5).setAngularDamping(0.5));
+        world.createCollider(RAPIER.ColliderDesc.cuboid(1.25, 0.4, 0.7).setMass(50).setRestitution(0.2).setFriction(0.5), carPhys);
+        p.dynamicParts.push({ mesh: carBody, body: carPhys });
+
+        // Car roof
+        const carTop = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.6, 1.3),
+          new THREE.MeshStandardMaterial({ color: carColors[i], roughness: 0.4, metalness: 0.3 }));
+        carTop.position.set(0.2, 0.7, 0);
+        carBody.add(carTop);
+      }
+
+      // === THE TRUCK ===
+      const truckGroup = new THREE.Group();
+      const truckMat = new THREE.MeshStandardMaterial({ color: 0xee3333, roughness: 0.5, metalness: 0.2 });
+      const truckWhiteMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.4 });
+
+      // Cargo body
+      const cargo = new THREE.Mesh(new THREE.BoxGeometry(4, 2.8, 2.2), truckWhiteMat);
+      cargo.position.set(-0.5, 0.2, 0);
+      cargo.castShadow = true;
+      truckGroup.add(cargo);
+
+      // Cab
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.2, 2.2), truckMat);
+      cab.position.set(2.4, -0.1, 0);
+      cab.castShadow = true;
+      truckGroup.add(cab);
+
+      // Windshield
+      const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.0, 1.6),
+        new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.1, metalness: 0.5 }));
+      windshield.position.set(3.33, 0.2, 0);
+      truckGroup.add(windshield);
+
+      // Bumper
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.4, 2.4),
+        new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.5 }));
+      bumper.position.set(3.4, -0.9, 0);
+      truckGroup.add(bumper);
+
+      // Headlights
+      for (const z of [-0.6, 0.6]) {
+        const hl = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.25, 0.35),
+          new THREE.MeshStandardMaterial({ color: 0xffffaa, emissive: 0xffffaa, emissiveIntensity: 1.5 }));
+        hl.position.set(3.35, -0.3, z);
+        truckGroup.add(hl);
+      }
+
+      // Wheels
+      const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.3, 12);
+      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+      const wheels = [];
+      for (const [wx, wz] of [[2.2, -1.2], [2.2, 1.2], [-1.5, -1.2], [-1.5, 1.2]]) {
+        const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+        wheel.rotation.x = Math.PI / 2;
+        wheel.position.set(wx, -1.2, wz);
+        truckGroup.add(wheel);
+        wheels.push(wheel);
+      }
+
+      truckGroup.position.set(-30, 2.5, -1.5);
+      scene.add(truckGroup);
+
+      // Truck physics — kinematic, velocity computed by Rapier from position delta
+      const truckBody = world.createRigidBody(
+        RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(-30, 2.5, -1.5));
+      const truckCollider = world.createCollider(
+        RAPIER.ColliderDesc.cuboid(3.5, 1.4, 1.1).setMass(8000).setRestitution(0.1).setFriction(0.3)
+          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS), truckBody);
+
+      const truckState = {
+        active: false, currentX: -30, speed: 22, hitMfer: false, justHit: false,
+        body: truckBody, colliderHandle: truckCollider.handle, group: truckGroup, wheels,
+        trafficLights,
+      };
+
+      p.animatedObjects.push({
+        group: truckGroup, body: truckBody, state: truckState,
+        update(dt) {
+          if (!truckState.active) return;
+
+          // Traffic light: switch to red as truck approaches
+          if (truckState.currentX > -10 && !truckState.lightSwitched) {
+            truckState.lightSwitched = true;
+            trafficLights[2].material.emissive.setHex(0x000000); // green off
+            trafficLights[0].material.emissive.setHex(0xff0000); // red on
+          }
+
+          if (!truckState.hitMfer) {
+            truckState.currentX += truckState.speed * dt;
+            truckBody.setNextKinematicTranslation({ x: truckState.currentX, y: 2.5, z: -1.5 });
+            const t = truckBody.translation();
+            truckGroup.position.set(t.x, t.y, t.z);
+            for (const w of wheels) w.rotation.z -= truckState.speed * dt * 3;
+
+            // When truck reaches mfer position — create ragdoll and smash
+            if (truckState.currentX >= -1 && gltfScene) {
+              if (mixer) mixer.stopAllAction();
+              const mfer = createRagdoll(gltfScene);
+              if (mfer) {
+                // Apply massive truck impulse to all ragdoll bodies
+                const truckVelX = truckState.speed;
+                for (const body of Object.values(mfer.ragdollBodies)) {
+                  body.setLinvel({ x: truckVelX * 0.8 + Math.random() * 3, y: 4 + Math.random() * 4, z: (Math.random() - 0.5) * 8 }, true);
+                  body.setAngvel({ x: (Math.random() - 0.5) * 15, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 15 }, true);
+                }
+                mfer.ragdollActive = true;
+                detachAccessories(mfer);
+                mfers.push(mfer);
+              }
+              gltfScene = null;
+              mixer = null;
+              truckState.hitMfer = true;
+              truckState.justHit = true;
+            }
+          } else {
+            // Truck is now dynamic — sync mesh from physics
+            if (truckState.justHit) {
+              truckBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+              truckBody.setLinvel({ x: truckState.speed * 0.6, y: 1, z: (Math.random() - 0.5) * 3 }, true);
+              truckBody.setAngvel({ x: 0, y: (Math.random() - 0.5) * 2, z: (Math.random() - 0.5) * 0.5 }, true);
+              truckState.justHit = false;
+            }
+            const t = truckBody.translation();
+            const r = truckBody.rotation();
+            truckGroup.position.set(t.x, t.y, t.z);
+            truckGroup.quaternion.set(r.x, r.y, r.z, r.w);
+          }
+        },
+      });
+
+      p.truckState = truckState;
+
+      p.reset = () => {
+        truckState.active = false;
+        truckState.hitMfer = false;
+        truckState.justHit = false;
+        truckState.lightSwitched = false;
+        truckState.currentX = -30;
+        truckBody.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+        truckBody.setTranslation({ x: -30, y: 2.5, z: -1.5 }, true);
+        truckBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+        truckGroup.position.set(-30, 2.5, -1.5);
+        truckGroup.quaternion.set(0, 0, 0, 1);
+        trafficLights[0].material.emissive.setHex(0x000000);
+        trafficLights[2].material.emissive.setHex(0x00ff00);
+      };
+
+      return p;
+    },
+
+    onDrop(lp) {
+      if (lp.truckState) {
+        lp.truckState.active = true;
+        lp.truckState.currentX = -25;
+      }
+    },
+
+    onCollision(lp, h1, h2) {
+      if (!lp.truckState || lp.truckState.hitMfer) return;
+      const th = lp.truckState.colliderHandle;
+      if (h1 === th || h2 === th) {
+        lp.truckState.hitMfer = true;
+        lp.truckState.justHit = true;
+        console.log('TRUCK HIT!');
+      }
+    },
+  };
+}
+
+const LEVELS = [createStairLevel(), createTruckHitLevel()];
+
+function cleanupLevel() {
+  if (!levelParts) return;
+  for (const { body } of levelParts.dynamicParts) world.removeRigidBody(body);
+  for (const body of levelParts.staticBodies) world.removeRigidBody(body);
+  for (const mesh of [...levelParts.staticMeshes, ...levelParts.dynamicParts.map(d => d.mesh)]) {
+    scene.remove(mesh);
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.material && mesh.material.dispose) mesh.material.dispose();
+  }
+  for (const h of levelParts.helpers) { scene.remove(h); if (h.dispose) h.dispose(); }
+  for (const obj of levelParts.animatedObjects) {
+    if (obj.body) world.removeRigidBody(obj.body);
+    if (obj.group) { scene.remove(obj.group); obj.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material && c.material.dispose) c.material.dispose(); }); }
+  }
+  levelParts = null;
+}
+
+function switchLevel(index) {
+  // Clean up all mfers
+  for (const mfer of mfers) {
+    for (const joint of mfer.ragdollJointRefs) world.removeImpulseJoint(joint, true);
+    for (const body of Object.values(mfer.ragdollBodies)) world.removeRigidBody(body);
+    for (const d of mfer.debugMeshes) { scene.remove(d.mesh); d.mesh.geometry.dispose(); d.mesh.material.dispose(); }
+    if (mfer.detachedPieces) { for (const piece of mfer.detachedPieces) { world.removeRigidBody(piece.body); scene.remove(piece.mesh); piece.geo.dispose(); } }
+    scene.remove(mfer.scene);
+  }
+  mfers = [];
+  if (gltfScene) { scene.remove(gltfScene); gltfScene = null; mixer = null; }
+
+  cleanupLevel();
+
+  currentLevelIndex = index;
+  const level = LEVELS[index];
+  levelParts = level.build();
+
+  // Apply level settings overrides
+  if (level.settingsOverrides) Object.assign(settings, DEFAULTS, level.settingsOverrides);
+
+  // Set spawn position
+  const sp = level.spawnPos;
+  originalPos.set(sp.x - modelCenter.x * modelScale, sp.y, -modelCenter.z * modelScale);
+
+  // Camera
+  const cam = level.cameraStart;
+  camera.position.set(...cam.pos);
+  camera.lookAt(...cam.lookAt);
+
+  // Spawn idle mfer
+  if (originalGltf) {
+    const cloned = SkeletonUtils.clone(originalGltf.scene);
+    cloned.traverse(c => { if (c.isMesh) { c.visible = false; c.castShadow = true; c.receiveShadow = true; c.frustumCulled = false; } });
+    applyRandomAppearance(cloned);
+    cloned.scale.setScalar(modelScale);
+    cloned.position.copy(originalPos);
+    cloned.traverse(c => { if (c.isBone) { c.userData.origPos = c.position.clone(); c.userData.origQuat = c.quaternion.clone(); c.userData.origScale = c.scale.clone(); } });
+    scene.add(cloned);
+    gltfScene = cloned;
+    mixer = new THREE.AnimationMixer(cloned);
+    const idle = originalGltf.animations.find(a => a.name.toLowerCase().includes('idle')) || originalGltf.animations[0];
+    if (idle) mixer.clipAction(idle).play();
   }
 
-  // Ramp at bottom of stairs
-  const rampAngle = 0.25;
-  const ramp = new THREE.Mesh(
-    new THREE.BoxGeometry(3, 0.15, 2.5),
-    new THREE.MeshStandardMaterial({ color: 0xe94560, roughness: 0.5 })
-  );
-  ramp.position.set(5, 0.3, 0);
-  ramp.rotation.z = -rampAngle;
-  ramp.castShadow = true;
-  ramp.receiveShadow = true;
-  scene.add(ramp);
+  // Update level selector buttons
+  document.querySelectorAll('.level-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.level) === index);
+  });
 
-  const rb = world.createRigidBody(
-    RAPIER.RigidBodyDesc.fixed()
-      .setTranslation(5, 0.3, 0)
-      .setRotation({ x: 0, y: 0, z: Math.sin(-rampAngle / 2), w: Math.cos(-rampAngle / 2) })
-  );
-  world.createCollider(RAPIER.ColliderDesc.cuboid(1.5, 0.075, 1.25).setRestitution(0.6).setFriction(0.3), rb);
-
-  // Dynamic boxes to crash into
-  const boxMat = new THREE.MeshStandardMaterial({ color: 0x533483, roughness: 0.6 });
-  for (let i = 0; i < 6; i++) {
-    const s = 0.25 + Math.random() * 0.4;
-    const box = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), boxMat);
-    const x = 3 + Math.random() * 4;
-    const z = -1.5 + Math.random() * 3;
-    const y = s / 2 + (Math.random() > 0.5 ? 0.35 : 0);
-    box.position.set(x, y, z);
-    box.castShadow = true;
-    box.receiveShadow = true;
-    scene.add(box);
-
-    const bb = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, z).setLinearDamping(0.3).setAngularDamping(0.3)
-    );
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(s / 2, s / 2, s / 2).setMass(1.5).setRestitution(0.4).setFriction(0.5), bb
-    );
-    obstacleParts.push({ mesh: box, body: bb });
-  }
+  settled = false;
+  document.getElementById('instructions').textContent = 'click to drop';
+  document.getElementById('score').textContent = '';
+  document.getElementById('reset-btn').style.display = 'none';
 }
 
 async function loadModel() {
@@ -882,7 +1384,12 @@ function spawnAndDropMfer() {
 function onDrop(e) {
   if (e.target.id === 'reset-btn') return;
 
-  if (gltfScene) {
+  const curLevel = LEVELS[currentLevelIndex];
+
+  if (gltfScene && curLevel.keepIdleUntilImpact) {
+    // Level handles ragdoll creation (e.g. truck triggers it)
+    // Just show reset button and notify level
+  } else if (gltfScene) {
     // First click: drop the idle mfer
     if (mixer) mixer.stopAllAction();
     const mfer = createRagdoll(gltfScene);
@@ -893,6 +1400,10 @@ function onDrop(e) {
     // Subsequent clicks: spawn a new random mfer and drop it
     spawnAndDropMfer();
   }
+
+  // Notify level of drop (e.g. starts the truck)
+  const level = LEVELS[currentLevelIndex];
+  if (level.onDrop && levelParts) level.onDrop(levelParts);
 
   settled = false;
   settledTimer = 0;
@@ -912,6 +1423,13 @@ function reset() {
       scene.remove(d.mesh);
       d.mesh.geometry.dispose();
       d.mesh.material.dispose();
+    }
+    if (mfer.detachedPieces) {
+      for (const piece of mfer.detachedPieces) {
+        world.removeRigidBody(piece.body);
+        scene.remove(piece.mesh);
+        piece.geo.dispose();
+      }
     }
     scene.remove(mfer.scene);
   }
@@ -947,12 +1465,16 @@ function reset() {
     if (idle) mixer.clipAction(idle).play();
   }
 
+  // Reset level-specific state (e.g. truck position)
+  if (levelParts && levelParts.reset) levelParts.reset();
+
   settled = false;
   document.getElementById('instructions').textContent = 'click to drop';
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
-  camera.position.set(0, 6, 14);
-  camera.lookAt(0, 4, 0);
+  const cam = LEVELS[currentLevelIndex].cameraStart;
+  camera.position.set(...cam.pos);
+  camera.lookAt(...cam.lookAt);
 }
 
 function onResize() {
@@ -1009,12 +1531,18 @@ function animate() {
   // Step physics with event queue for collision detection
   world.step(eventQueue);
 
-  // Sync obstacle meshes to physics
-  for (const { mesh, body } of obstacleParts) {
-    const p = body.translation();
-    const r = body.rotation();
-    mesh.position.set(p.x, p.y, p.z);
-    mesh.quaternion.set(r.x, r.y, r.z, r.w);
+  // Sync level dynamic parts to physics
+  if (levelParts) {
+    for (const { mesh, body } of levelParts.dynamicParts) {
+      const p = body.translation();
+      const r = body.rotation();
+      mesh.position.set(p.x, p.y, p.z);
+      mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    }
+    // Update animated objects (truck, etc.)
+    for (const obj of levelParts.animatedObjects) {
+      if (obj.update) obj.update(delta);
+    }
   }
 
   // Process all mfers
@@ -1045,9 +1573,19 @@ function animate() {
       d.mesh.position.set(p.x, p.y, p.z);
       d.mesh.quaternion.set(r.x, r.y, r.z, r.w);
     }
+
+    // Sync detached accessory pieces
+    if (mfer.detachedPieces) {
+      for (const piece of mfer.detachedPieces) {
+        const p = piece.body.translation();
+        const r = piece.body.rotation();
+        piece.mesh.position.set(p.x, p.y, p.z);
+        piece.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+      }
+    }
   }
 
-  // Drain collision events — activate any pre-impact mfers on collision
+  // Drain collision events — activate ragdolls + notify level
   eventQueue.drainCollisionEvents((h1, h2, started) => {
     if (!started) return;
     for (const mfer of mfers) {
@@ -1058,7 +1596,11 @@ function animate() {
         const s = settings.spin;
         hb.setAngvel({ x: (Math.random() - 0.5) * s, y: (Math.random() - 0.5) * s * 0.5, z: (Math.random() - 0.5) * s }, true);
       }
+      detachAccessories(mfer);
     }
+    // Level-specific collision handling (e.g. truck hit detection)
+    const level = LEVELS[currentLevelIndex];
+    if (level.onCollision && levelParts) level.onCollision(levelParts, h1, h2);
   });
 
   if (mfers.length > 0) {
