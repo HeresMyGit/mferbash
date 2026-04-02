@@ -574,8 +574,23 @@ let savedSpawns = [];        // saved { x, y, z, rotY } for reset
 
 // Camera
 let orbitControls;
-let cameraMode = 'follow';
+let cameraMode = 'near'; // 'near', 'standard', 'distant', 'free'
+const CAM_MODES = ['near', 'standard', 'distant', 'free'];
+const CAM_ZOOM = { near: 0.7, standard: 1, distant: 2 };
 const keysDown = new Set();
+
+function applyCameraZoom() {
+  if (cameraMode === 'free') return;
+  const cam = currentLevel.cameraStart;
+  const zoom = CAM_ZOOM[cameraMode] || 1;
+  const lx = cam.lookAt[0], ly = cam.lookAt[1], lz = cam.lookAt[2];
+  camera.position.set(
+    lx + (cam.pos[0] - lx) * zoom,
+    ly + (cam.pos[1] - ly) * zoom,
+    lz + (cam.pos[2] - lz) * zoom
+  );
+  camera.lookAt(lx, ly, lz);
+}
 
 // Raycasting + placement preview
 const raycaster = new THREE.Raycaster();
@@ -644,9 +659,7 @@ async function init() {
   currentLevel = getLevel(0);
   levelParts = currentLevel.build();
   updateLevelSliders(0);
-  const cam = currentLevel.cameraStart;
-  camera.position.set(...cam.pos);
-  camera.lookAt(...cam.lookAt);
+  applyCameraZoom();
   await loadModel();
 
   ghostPreview = createGhostPreview();
@@ -704,7 +717,7 @@ async function init() {
       lastTouchY = (t0.clientY + t1.clientY) / 2;
       lastPinchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
       // Auto-switch to free cam
-      if (cameraMode === 'follow') {
+      if (cameraMode !== 'free') {
         cameraMode = 'free';
         orbitControls.enabled = true;
         const fwd = new THREE.Vector3();
@@ -783,16 +796,20 @@ async function init() {
     }
   });
   window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
-  // Camera mode toggle
+  // Camera mode toggle — cycles: near → standard → distant → free
   const camBtn = document.getElementById('cam-toggle');
   let camHintShown = false;
   camBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (cameraMode === 'follow') {
-      cameraMode = 'free';
+    const idx = CAM_MODES.indexOf(cameraMode);
+    cameraMode = CAM_MODES[(idx + 1) % CAM_MODES.length];
+    camBtn.textContent = 'cam: ' + cameraMode;
+
+    if (cameraMode === 'free') {
       orbitControls.enabled = true;
-      orbitControls.target.set(camera.position.x - 3, camera.position.y - 3, camera.position.z - 10);
-      camBtn.textContent = 'cam: free';
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
       camBtn.classList.add('active');
       if (!camHintShown) {
         camHintShown = true;
@@ -801,10 +818,9 @@ async function init() {
         setTimeout(() => { hint.style.display = 'none'; }, 4000);
       }
     } else {
-      cameraMode = 'follow';
       orbitControls.enabled = false;
-      camBtn.textContent = 'cam: follow';
       camBtn.classList.remove('active');
+      applyCameraZoom();
     }
   });
 
@@ -997,7 +1013,7 @@ function createStairLevel() {
     spawnPos: { x: topX - 1, y: topY, z: 0 },
     groundY: 1,
     settingsOverrides: { damping: 0.3 },
-    cameraStart: { pos: [totalD * 0.3, totalH + 4, totalD * 0.8 + 12], lookAt: [totalD * 0.5, totalH * 0.35, 0] },
+    cameraStart: { pos: [topX - 2, topY + 3, 8], lookAt: [topX - 1, topY, 0] },
 
     build() {
       const p = { staticBodies: [], staticMeshes: [], dynamicParts: [], helpers: [], animatedObjects: [] };
@@ -1150,7 +1166,7 @@ function createTruckHitLevel() {
     name: 'truck hit',
     spawnPos: { x: 0, y: 1, z: 0 },
     groundY: 1,
-    cameraStart: { pos: [5, 4, 12], lookAt: [0, 1, 0] },
+    cameraStart: { pos: [2, 3, 8], lookAt: [0, 1.5, 0] },
     settingsOverrides: { launchSpeed: 0, dropHeight: 1 },
     keepIdleUntilImpact: true,
 
@@ -1545,7 +1561,7 @@ function createWreckingBallLevel() {
     name: 'wrecking ball',
     spawnPos: { x: 0, y: 1, z: -1.5 },
     groundY: 1,
-    cameraStart: { pos: [0, 8, 18], lookAt: [0, 4, -2] },
+    cameraStart: { pos: [0, 5, 8], lookAt: [0, 2, -1.5] },
     settingsOverrides: { launchSpeed: 0, dropHeight: 1 },
     keepIdleUntilImpact: true,
 
@@ -1849,7 +1865,7 @@ function createPachinkoLevel() {
     spawnPos: { x: 0, y: boardH + 2, z: 0 },
     groundY: 1,
     settingsOverrides: { damping: 0.3, bounce: 0.6 },
-    cameraStart: { pos: [0, boardH * 0.5 + 2, -(boardH * 0.5 + 10)], lookAt: [0, boardH * 0.4, 0] },
+    cameraStart: { pos: [0, boardH + 2, -(boardH * 0.3 + 8)], lookAt: [0, boardH - 1, 0] },
     cameraFollow: { offX: 0, offY: 4, offZ: -(boardH * 0.4 + 8), minY: 5 },
 
     build() {
@@ -2110,7 +2126,7 @@ function createPressLevel() {
     name: 'press',
     spawnPos: { x: 0, y: 1.6, z: 0 },
     groundY: 1.6,
-    cameraStart: { pos: [0, 5, 12], lookAt: [0, 3, 0] },
+    cameraStart: { pos: [0, 5, 8], lookAt: [0, 2.5, 0] },
     settingsOverrides: { launchSpeed: 0, dropHeight: 1, damping: 0.5 },
     keepIdleUntilImpact: true,
 
@@ -2421,9 +2437,7 @@ function switchLevel(index) {
   originalPos.set(sp.x - modelCenter.x * modelScale, sp.y, sp.z - modelCenter.z * modelScale);
 
   // Camera
-  const cam = currentLevel.cameraStart;
-  camera.position.set(...cam.pos);
-  camera.lookAt(...cam.lookAt);
+  applyCameraZoom();
 
   // Spawn idle mfer
   if (originalGltf) {
@@ -2971,6 +2985,12 @@ function cleanupMfers() {
 function reset() {
   cleanupMfers();
   gamePhase = 'placing';
+  if (cameraMode === 'free') {
+    cameraMode = 'near';
+    orbitControls.enabled = false;
+    document.getElementById('cam-toggle').textContent = 'cam: near';
+    document.getElementById('cam-toggle').classList.remove('active');
+  }
 
   // Re-create all mfers at their saved spawn positions
   for (const sp of savedSpawns) {
@@ -3027,9 +3047,7 @@ function reset() {
   document.getElementById('reset-btn').style.display = 'none';
   document.getElementById('clear-btn').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
-  const cam = currentLevel.cameraStart;
-  camera.position.set(...cam.pos);
-  camera.lookAt(...cam.lookAt);
+  applyCameraZoom();
 }
 
 function clearAll() {
@@ -3076,9 +3094,7 @@ function clearAll() {
   document.getElementById('reset-btn').style.display = 'none';
   document.getElementById('clear-btn').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
-  const cam = currentLevel.cameraStart;
-  camera.position.set(...cam.pos);
-  camera.lookAt(...cam.lookAt);
+  applyCameraZoom();
 }
 
 function onResize() {
@@ -3264,18 +3280,19 @@ function animate() {
   if (mfers.length > 0) {
     updateScore();
 
-    if (cameraMode === 'follow') {
-      // Camera follows latest mfer's hips
+    if (cameraMode !== 'free') {
+      // Camera follows latest mfer's hips with zoom level
       const latest = mfers[mfers.length - 1];
       const hipsBody = latest.ragdollBodies['hips'];
       if (hipsBody) {
         const pos = hipsBody.translation();
         const vel = hipsBody.linvel();
         const camFollow = currentLevel.cameraFollow || { offX: 3, offY: 3.5, offZ: 10, minY: 3 };
+        const zoom = CAM_ZOOM[cameraMode] || 1;
         const lookAheadX = vel.x * 0.15;
-        const camTargetX = pos.x + camFollow.offX + lookAheadX;
-        const camTargetY = Math.max(pos.y + camFollow.offY, camFollow.minY);
-        const camTargetZ = pos.z + camFollow.offZ;
+        const camTargetX = pos.x + camFollow.offX * zoom + lookAheadX;
+        const camTargetY = Math.max(pos.y + camFollow.offY * zoom, camFollow.minY);
+        const camTargetZ = pos.z + camFollow.offZ * zoom;
 
         camera.position.x += (camTargetX - camera.position.x) * 0.08;
         camera.position.y += (camTargetY - camera.position.y) * 0.1;
@@ -3307,7 +3324,7 @@ function animate() {
     camera.getWorldDirection(fwd);
 
     const moveKeys = ['w','a','s','d','q','e','z','x','arrowup','arrowdown','arrowleft','arrowright'];
-    if (cameraMode === 'follow' && moveKeys.some(k => keysDown.has(k))) {
+    if (cameraMode !== 'free' && moveKeys.some(k => keysDown.has(k))) {
       cameraMode = 'free';
       orbitControls.enabled = true;
       document.getElementById('cam-toggle').textContent = 'cam: free';
