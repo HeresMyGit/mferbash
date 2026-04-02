@@ -2379,7 +2379,225 @@ function createPressLevel() {
   };
 }
 
-const LEVEL_FACTORIES = [createStairLevel, createTruckHitLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel];
+// ---- LEVEL 6: CANNON ----
+
+function createCannonLevel() {
+  return {
+    name: 'cannon',
+    spawnPos: { x: -8, y: 2.5, z: 0 },
+    groundY: 1,
+    cameraStart: { pos: [-6, 4, 8], lookAt: [-8, 2.5, 0] },
+    settingsOverrides: { launchSpeed: 0, dropHeight: 1, damping: 0.3 },
+    keepIdleUntilImpact: true,
+    cameraFollow: { offX: 2, offY: 3, offZ: 8, minY: 3 },
+
+    build() {
+      const p = { staticBodies: [], staticMeshes: [], dynamicParts: [], helpers: [], animatedObjects: [] };
+
+      // Sky — bright blue
+      scene.background = new THREE.Color(0x87ceeb);
+      scene.fog = new THREE.FogExp2(0x87ceeb, 0.01);
+
+      // Ground
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 40),
+        new THREE.MeshStandardMaterial({ color: 0x6b8c5a, roughness: 0.9 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+      p.staticMeshes.push(ground);
+
+      const gb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0.5, 0));
+      world.createCollider(RAPIER.ColliderDesc.cuboid(30, 0.5, 20).setRestitution(0.3).setFriction(0.7), gb);
+      p.staticBodies.push(gb);
+
+      // Grid
+      const grid = new THREE.GridHelper(40, 40, 0x999980, 0x999980);
+      grid.position.y = 1.01;
+      scene.add(grid);
+      p.helpers.push(grid);
+
+      // === THE CANNON ===
+      const cannonMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.3, metalness: 0.7 });
+      const cannonGroup = new THREE.Group();
+
+      // Barrel
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 4, 16), cannonMat);
+      barrel.rotation.z = Math.PI / 2; // point along X
+      barrel.position.set(0, 0, 0);
+      cannonGroup.add(barrel);
+
+      // Barrel rim
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.2, 16), cannonMat);
+      rim.rotation.z = Math.PI / 2;
+      rim.position.set(2, 0, 0);
+      cannonGroup.add(rim);
+
+      // Base/wheels
+      const baseMat = new THREE.MeshStandardMaterial({ color: 0x664422, roughness: 0.7 });
+      const base = new THREE.Mesh(new THREE.BoxGeometry(3, 0.3, 1.5), baseMat);
+      base.position.set(0, -0.6, 0);
+      cannonGroup.add(base);
+
+      // Wheels
+      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x553311, roughness: 0.8 });
+      for (const wz of [-0.9, 0.9]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.15, 12), wheelMat);
+        wheel.rotation.x = Math.PI / 2;
+        wheel.position.set(-0.3, -0.6, wz);
+        cannonGroup.add(wheel);
+      }
+
+      // Fuse (decorative)
+      const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6),
+        new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff6600, emissiveIntensity: 0.5 }));
+      fuse.position.set(-1.8, 0.4, 0);
+      fuse.rotation.z = 0.5;
+      cannonGroup.add(fuse);
+
+      // Angle the cannon upward slightly
+      cannonGroup.position.set(-10, 1.8, 0);
+      cannonGroup.rotation.z = 0.15; // slight upward angle
+      scene.add(cannonGroup);
+
+      // Cannon physics (static)
+      const cannonBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(-10, 1.8, 0));
+      world.createCollider(RAPIER.ColliderDesc.cuboid(2, 0.5, 0.75).setRestitution(0.2).setFriction(0.5), cannonBody);
+      p.staticBodies.push(cannonBody);
+      p.staticMeshes.push(cannonGroup);
+
+      // === BLOCK WALL (target) ===
+      const blockColors = [0xcc4444, 0x44aa44, 0x4466cc, 0xccaa22, 0xcc6633];
+      const wallX = 8;
+      const rows = 6, cols = 5, layers = 3;
+      const bw = 1.0, bh = 0.6, bd = 0.8;
+
+      for (let layer = 0; layer < layers; layer++) {
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            const offset = (row % 2 === 0) ? 0 : bw * 0.5;
+            const bx = wallX + layer * bd;
+            const by = 1 + row * bh + bh / 2;
+            const bz = (col - cols / 2) * bw + offset;
+
+            const color = blockColors[(row + col + layer) % blockColors.length];
+            const block = new THREE.Mesh(new THREE.BoxGeometry(bd, bh, bw),
+              new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+            block.position.set(bx, by, bz);
+            block.castShadow = true;
+            block.receiveShadow = true;
+            scene.add(block);
+
+            const bb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+              .setTranslation(bx, by, bz).setLinearDamping(0.2).setAngularDamping(0.2));
+            world.createCollider(RAPIER.ColliderDesc.cuboid(bd / 2, bh / 2, bw / 2)
+              .setMass(3).setRestitution(0.2).setFriction(0.6), bb);
+            p.dynamicParts.push({ mesh: block, body: bb, initPos: { x: bx, y: by, z: bz } });
+          }
+        }
+      }
+
+      // === CANNONBALL ===
+      const ballRadius = 0.4;
+      const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(ballRadius, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.8 }));
+      ballMesh.position.set(-10, 1.8, 0);
+      ballMesh.visible = false; // hidden until fired
+      ballMesh.castShadow = true;
+      scene.add(ballMesh);
+
+      const cannonState = {
+        active: false,
+        fired: false,
+        ballMesh,
+        ballBody: null,
+        chargeTime: 0,
+      };
+
+      p.animatedObjects.push({
+        mesh: ballMesh, state: cannonState,
+        update(dt) {
+          if (!cannonState.active) return;
+
+          if (!cannonState.fired) {
+            // Brief charge animation — fuse glow
+            cannonState.chargeTime += dt;
+            fuse.material.emissiveIntensity = 0.5 + Math.sin(cannonState.chargeTime * 20) * 0.5;
+
+            if (cannonState.chargeTime >= 0.8) {
+              cannonState.fired = true;
+              fuse.visible = false;
+
+              // Convert all placed mfers to ragdolls
+              for (const pm of placedMfers) {
+                if (pm.mixer) pm.mixer.stopAllAction();
+                const mfer = createRagdoll(pm.scene);
+                if (mfer) {
+                  // Launch! Strong forward velocity + slight arc
+                  const launchSpeed = 30;
+                  for (const body of Object.values(mfer.ragdollBodies)) {
+                    body.setLinvel({
+                      x: launchSpeed + (Math.random() - 0.5) * 3,
+                      y: 5 + Math.random() * 3,
+                      z: (Math.random() - 0.5) * 3,
+                    }, true);
+                    body.setAngvel({
+                      x: (Math.random() - 0.5) * 8,
+                      y: (Math.random() - 0.5) * 8,
+                      z: (Math.random() - 0.5) * 8,
+                    }, true);
+                  }
+                  mfer.ragdollActive = true;
+                  mfer.detachAfter = performance.now() + 500;
+                  captureImpactShot(mfer);
+                  mfers.push(mfer);
+                }
+              }
+              placedMfers = [];
+
+              // Fire a cannonball too
+              ballMesh.visible = true;
+              ballMesh.position.set(-8, 2.2, 0);
+              const bb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+                .setTranslation(-8, 2.2, 0).setLinearDamping(0.05));
+              world.createCollider(RAPIER.ColliderDesc.ball(ballRadius)
+                .setMass(50).setRestitution(0.3).setFriction(0.4), bb);
+              bb.setLinvel({ x: 35, y: 6, z: 0 }, true);
+              cannonState.ballBody = bb;
+              p.dynamicParts.push({ mesh: ballMesh, body: bb });
+            }
+          }
+        },
+      });
+
+      p.cannonState = cannonState;
+
+      p.reset = () => {
+        cannonState.active = false;
+        cannonState.fired = false;
+        cannonState.chargeTime = 0;
+        fuse.visible = true;
+        fuse.material.emissiveIntensity = 0.5;
+        ballMesh.visible = false;
+        if (cannonState.ballBody) {
+          world.removeRigidBody(cannonState.ballBody);
+          cannonState.ballBody = null;
+          // Remove from dynamicParts
+          p.dynamicParts = p.dynamicParts.filter(dp => dp.mesh !== ballMesh);
+        }
+      };
+
+      return p;
+    },
+
+    onDrop(lp) {
+      if (lp.cannonState) {
+        lp.cannonState.active = true;
+      }
+    },
+  };
+}
+
+const LEVEL_FACTORIES = [createStairLevel, createTruckHitLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel];
 function getLevel(i) { return LEVEL_FACTORIES[i](); }
 
 function cleanupLevel() {
@@ -3278,7 +3496,7 @@ function animate() {
   }
 
   if (mfers.length > 0) {
-    updateScore();
+    // updateScore(); // disabled for now
 
     if (cameraMode !== 'free') {
       // Camera follows latest mfer's hips with zoom level
