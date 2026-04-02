@@ -942,7 +942,57 @@ let paintedThisClick = false;
 const PAINT_MIN_DIST = 0.5;
 const PAINT_MIN_TIME = 250; // minimum world-space distance between painted mfers
 
+// === LOADING SCREEN: spinning sartoshi head ===
+let loadingRenderer, loadingScene, loadingCamera, loadingHead, loadingAnimId;
+
+function startLoadingScreen() {
+  loadingRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  loadingRenderer.setSize(200, 200);
+  loadingRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  loadingRenderer.domElement.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-70%);z-index:25;';
+  document.body.appendChild(loadingRenderer.domElement);
+
+  loadingScene = new THREE.Scene();
+  loadingCamera = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
+  loadingCamera.position.set(0, 1, 2.5);
+  loadingCamera.lookAt(0, 0.8, 0);
+
+  loadingScene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.5);
+  dl.position.set(2, 3, 2);
+  loadingScene.add(dl);
+
+  const loader = new GLTFLoader();
+  loader.load('/sartoshi-head.glb', (gltf) => {
+    loadingHead = SkeletonUtils.clone(gltf.scene);
+    loadingHead.scale.set(0.6, 0.6, 0.6);
+    loadingHead.position.set(0, 0.9, 0);
+    loadingHead.rotation.y = -Math.PI / 2;
+    loadingScene.add(loadingHead);
+  });
+
+  function animateLoading() {
+    loadingAnimId = requestAnimationFrame(animateLoading);
+    if (loadingHead) loadingHead.rotation.y += 0.02;
+    loadingRenderer.render(loadingScene, loadingCamera);
+  }
+  animateLoading();
+}
+
+function stopLoadingScreen() {
+  if (loadingAnimId) cancelAnimationFrame(loadingAnimId);
+  if (loadingRenderer) {
+    document.body.removeChild(loadingRenderer.domElement);
+    loadingRenderer.dispose();
+    loadingRenderer = null;
+  }
+  loadingScene = null;
+  loadingCamera = null;
+  loadingHead = null;
+}
+
 async function init() {
+  startLoadingScreen();
   await RAPIER.init();
 
   scene = new THREE.Scene();
@@ -1346,6 +1396,7 @@ async function init() {
     }, 300);
   });
 
+  stopLoadingScreen();
   document.getElementById('loading').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
   document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
@@ -1535,7 +1586,8 @@ async function loadModel() {
     },
     (progress) => {
       const pct = progress.total > 0 ? Math.round((progress.loaded / progress.total) * 100) : '...';
-      document.getElementById('loading').textContent = `loading mfer... ${pct}%`;
+      const cappedPct = progress.total > 0 ? Math.min(69, Math.round((progress.loaded / progress.total) * 69)) : '...';
+      document.getElementById('loading').textContent = `loading mfer... ${cappedPct}%`;
     },
     reject);
   });
