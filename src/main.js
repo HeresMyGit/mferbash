@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 
 const MODEL_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/builders/mfermashup.glb';
 
@@ -367,6 +368,47 @@ function getDetachSegment(name) {
   return null;
 }
 
+let impactShotTaken = false;
+let pendingImpactMfer = null;
+let pendingImpactFrames = 0;
+// GIF capture — frames stored raw, encoded only on user request
+const GIF_FPS = 30;
+const GIF_PRE = 1.5;
+const GIF_POST = 1.5;
+const GIF_W = 640, GIF_H = 400;
+let gifFrameBuffer = [];
+let gifFinalFrames = null;
+let gifCapturing = false;
+let gifPostFrames = 0;
+let lastGifFrameTime = 0;
+const gifCanvas = document.createElement('canvas');
+gifCanvas.width = GIF_W;
+gifCanvas.height = GIF_H;
+const gifCtx = gifCanvas.getContext('2d', { willReadFrequently: true });
+
+function captureImpactShot(mfer) {
+  if (impactShotTaken) return;
+  impactShotTaken = true;
+  // Delay capture by a few frames so ragdoll bones have synced
+  pendingImpactMfer = mfer;
+  pendingImpactFrames = 3;
+}
+
+let impactPhotoMfer = null;
+
+function doImpactCapture() {
+  // Just store the mfer reference — photo rendered on demand when user clicks save
+  impactPhotoMfer = pendingImpactMfer;
+  pendingImpactMfer = null;
+  document.getElementById('impact-captures').style.display = 'block';
+  document.getElementById('impact-video-wrap').style.display = 'none';
+
+  // Snapshot pre-impact frames, start collecting post-impact frames
+  gifFinalFrames = [...gifFrameBuffer];
+  gifCapturing = true;
+  gifPostFrames = Math.round(GIF_POST * GIF_FPS);
+}
+
 function detachAccessories(mfer) {
   const toDetach = [];
   mfer.scene.traverse((child) => {
@@ -556,7 +598,7 @@ async function init() {
   camera.position.set(0, 6, 14); // overridden after level build
   camera.lookAt(0, 4, 0);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
@@ -682,6 +724,58 @@ async function init() {
   document.getElementById('clear-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     clearAll();
+  });
+  document.getElementById('impact-photo').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!impactPhotoMfer) return;
+    const headBody = impactPhotoMfer.ragdollBodies['head'];
+    if (!headBody) return;
+
+    const hp = headBody.translation();
+    const savedPos = camera.position.clone();
+    const savedQuat = camera.quaternion.clone();
+
+    const faceDir = new THREE.Vector3();
+    camera.getWorldDirection(faceDir);
+    camera.position.set(hp.x - faceDir.x * 2, hp.y + 0.5, hp.z - faceDir.z * 2);
+    camera.lookAt(hp.x, hp.y, hp.z);
+    renderer.render(scene, camera);
+
+    const dataUrl = renderer.domElement.toDataURL('image/png');
+    camera.position.copy(savedPos);
+    camera.quaternion.copy(savedQuat);
+
+    const link = document.createElement('a');
+    link.download = 'mfer-bash-impact.png';
+    link.href = dataUrl;
+    link.click();
+  });
+  document.getElementById('impact-video-wrap').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!gifFinalFrames || gifFinalFrames.length === 0) return;
+    // Show encoding status
+    const label = e.currentTarget.querySelector('div');
+    const origText = label.textContent;
+    label.textContent = 'encoding...';
+    // Defer encoding to next frame so UI updates
+    setTimeout(() => {
+      const encoder = GIFEncoder();
+      const delay = Math.round(1000 / GIF_FPS);
+      for (const frame of gifFinalFrames) {
+        const palette = quantize(frame, 256);
+        const indexed = applyPalette(frame, palette);
+        encoder.writeFrame(indexed, GIF_W, GIF_H, { palette, delay });
+      }
+      encoder.finish();
+      const blob = new Blob([encoder.bytes()], { type: 'image/gif' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = 'mfer-bash.gif';
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+      label.textContent = origText;
+    }, 50);
   });
 
   // Settings panel toggle
@@ -1263,6 +1357,7 @@ function createTruckHitLevel() {
                     body.setAngvel({ x: (Math.random() - 0.5) * 15, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 15 }, true);
                   }
                   mfer.ragdollActive = true;
+                  captureImpactShot(mfer);
                   detachAccessories(mfer);
                   mfers.push(mfer);
                 }
@@ -1585,6 +1680,7 @@ function createWreckingBallLevel() {
                     }, true);
                   }
                   mfer.ragdollActive = true;
+                  captureImpactShot(mfer);
                   detachAccessories(mfer);
                   mfers.push(mfer);
                 }
@@ -2472,6 +2568,13 @@ function onClick(e) {
 function onGo() {
   gamePhase = 'playing';
   if (ghostPreview) ghostPreview.visible = false;
+  impactShotTaken = false;
+  impactPhotoMfer = null;
+  gifFrameBuffer = [];
+  gifFinalFrames = null;
+  gifCapturing = false;
+  document.getElementById('impact-captures').style.display = 'none';
+  document.getElementById('impact-video-wrap').style.display = 'none';
   document.getElementById('go-btn').style.display = 'none';
   document.getElementById('reset-btn').style.display = 'block';
   document.getElementById('clear-btn').style.display = 'block';
@@ -2747,6 +2850,7 @@ function animate() {
     for (const mfer of mfers) {
       if (mfer.ragdollActive) continue;
       mfer.ragdollActive = true;
+      captureImpactShot(mfer);
       const hb = mfer.ragdollBodies['hips'];
       if (hb) {
         const s = settings.spin;
@@ -2765,6 +2869,7 @@ function animate() {
     for (const mfer of mfers) {
       if (mfer.detachAfter && now >= mfer.detachAfter) {
         mfer.detachAfter = null;
+        captureImpactShot(mfer);
         detachAccessories(mfer);
       }
     }
@@ -2791,6 +2896,7 @@ function animate() {
     const mfer = createRagdoll(pm.scene);
     if (mfer) {
       mfer.ragdollActive = true;
+      captureImpactShot(mfer);
       mfers.push(mfer);
     }
   }
@@ -2822,8 +2928,40 @@ function animate() {
     }
   }
 
+  // Delayed impact photo capture (after bones have synced)
+  if (pendingImpactMfer && --pendingImpactFrames <= 0) doImpactCapture();
+
   if (cameraMode === 'free') orbitControls.update();
   renderer.render(scene, camera);
+
+  // GIF frame capture — just buffer raw frames, encode on demand
+  if (gamePhase === 'playing') {
+    const gifInterval = 1000 / GIF_FPS;
+    if (now - lastGifFrameTime >= gifInterval) {
+      lastGifFrameTime = now;
+      // Crop center 50% of canvas for a closer view
+      const sw = renderer.domElement.width, sh = renderer.domElement.height;
+      const cx = sw * 0.25, cy = sh * 0.25, cw = sw * 0.5, ch = sh * 0.5;
+      gifCtx.drawImage(renderer.domElement, cx, cy, cw, ch, 0, 0, GIF_W, GIF_H);
+      const frameData = new Uint8Array(gifCtx.getImageData(0, 0, GIF_W, GIF_H).data);
+
+      if (gifCapturing) {
+        // Post-impact: add to final frames
+        gifFinalFrames.push(frameData);
+        gifPostFrames--;
+        if (gifPostFrames <= 0) {
+          gifCapturing = false;
+          // Show "save gif" button (encoding happens on click)
+          document.getElementById('impact-video-wrap').style.display = 'block';
+        }
+      } else if (!impactShotTaken) {
+        // Pre-impact: rolling buffer
+        const maxFrames = Math.round(GIF_PRE * GIF_FPS);
+        gifFrameBuffer.push(frameData);
+        while (gifFrameBuffer.length > maxFrames) gifFrameBuffer.shift();
+      }
+    }
+  }
 }
 
 init().then(() => {
