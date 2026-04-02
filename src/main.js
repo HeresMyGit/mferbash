@@ -1639,7 +1639,6 @@ function createTruckHitLevel() {
                 const zDist = Math.abs(mz - cd.z);
                 const xHit = cd.dir > 0 ? (carFrontX >= mx - 0.5) : (carFrontX <= mx + 0.5);
                 if (xHit && zDist < carHalfW + 0.5) {
-                  if (pm.mixer) pm.mixer.stopAllAction();
                   const mfer = createRagdoll(pm.scene);
                   if (mfer) {
                     for (const body of Object.values(mfer.ragdollBodies)) {
@@ -1767,7 +1766,6 @@ function createTruckHitLevel() {
               const mferZ = pm.scene.position.z + modelCenter.z * modelScale;
               const zDist = Math.abs(mferZ - truckZ);
               if (truckFrontX >= mferX - 0.5 && zDist < truckHalfW + 0.5) {
-                if (pm.mixer) pm.mixer.stopAllAction();
                 const mfer = createRagdoll(pm.scene);
                 if (mfer) {
                   const tv = truckState.speed;
@@ -2079,7 +2077,6 @@ function createWreckingBallLevel() {
               const mz = pm.scene.position.z + modelCenter.z * modelScale;
               const dist = Math.sqrt((bx - mx) ** 2 + (by - my) ** 2 + (ballState.pivotZ - mz) ** 2);
               if (dist < ballRadius + 0.5) {
-                if (pm.mixer) pm.mixer.stopAllAction();
                 const mfer = createRagdoll(pm.scene);
                 if (mfer) {
                   // Impulse from ball direction
@@ -2592,7 +2589,6 @@ function createPressLevel() {
           if (pressState.phase === 'pressing' && pressState.currentY < 4) {
             const remaining = [];
             for (const pm of placedMfers) {
-              if (pm.mixer) pm.mixer.stopAllAction();
               const mfer = createRagdoll(pm.scene);
               if (mfer) {
                 mfer.ragdollActive = true;
@@ -2836,7 +2832,6 @@ function createCannonLevel() {
 
               // Convert all placed mfers to ragdolls
               for (const pm of placedMfers) {
-                if (pm.mixer) pm.mixer.stopAllAction();
                 const mfer = createRagdoll(pm.scene);
                 if (mfer) {
                   // Launch! Strong forward velocity + slight arc
@@ -3081,9 +3076,9 @@ async function loadModel() {
 function createRagdoll(targetScene) {
   if (!targetScene) return null;
 
-  const mfer = { scene: targetScene, ragdollBodies: {}, ragdollJointRefs: [], ragdollSegData: {}, ragdollActive: false, debugMeshes: [] };
+  const mfer = { scene: targetScene, ragdollBodies: {}, ragdollJointRefs: [], ragdollSegData: {}, ragdollActive: false, debugMeshes: [], skipSync: 2 };
 
-  // Ensure skeleton world matrices are current
+  // Ensure skeleton world matrices are current (animation still active)
   targetScene.updateMatrixWorld(true);
 
   // Build bone lookup
@@ -3228,6 +3223,9 @@ const _off = new THREE.Vector3(), _pi = new THREE.Matrix4(), _dw = new THREE.Mat
 const _lm = new THREE.Matrix4(), _lp = new THREE.Vector3(), _lq = new THREE.Quaternion(), _ls = new THREE.Vector3();
 
 function syncRagdollBones(mfer) {
+  // Skip first frames so the animated pose holds (no T-pose flash)
+  if (mfer.skipSync > 0) { mfer.skipSync--; return; }
+
   const sv = new THREE.Vector3(modelScale, modelScale, modelScale);
 
   for (const segName of SEGMENT_ORDER) {
@@ -3412,7 +3410,6 @@ function activateAllMfers() {
 
     if (shouldLaunch) {
       // Launch this mfer
-      if (pm.mixer) pm.mixer.stopAllAction();
       const mfer = createRagdoll(pm.scene);
       if (mfer) {
         applyLaunchVelocity(mfer);
@@ -3484,7 +3481,6 @@ function onClick(e) {
     if (!worldPos) return;
     const pm = spawnIdleMfer(worldPos);
     if (pm) {
-      if (pm.mixer) pm.mixer.stopAllAction();
       const mfer = createRagdoll(pm.scene);
       if (mfer) mfers.push(mfer);
     }
@@ -3836,7 +3832,6 @@ function animate() {
 
   for (const pm of hitStanding) {
     world.removeRigidBody(pm.triggerBody);
-    if (pm.mixer) pm.mixer.stopAllAction();
     const mfer = createRagdoll(pm.scene);
     if (mfer) {
       mfer.ragdollActive = true;
