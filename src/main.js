@@ -1882,7 +1882,8 @@ function createPachinkoLevel() {
     name: 'pachinko',
     spawnPos: { x: 0, y: boardH + 2, z: 0 },
     groundY: 1,
-    settingsOverrides: { damping: 0.3, bounce: 0.6 },
+    settingsOverrides: { damping: 0.3, bounce: 0.6, launchSpeed: 0 },
+    spawnRotY: Math.PI, // face toward camera
     cameraStart: { pos: [0, boardH + 2, -(boardH * 0.3 + 8)], lookAt: [0, boardH - 1, 0] },
     cameraFollow: { offX: 0, offY: 4, offZ: -(boardH * 0.4 + 8), minY: 5 },
 
@@ -2682,6 +2683,7 @@ function switchLevel(index) {
     applyRandomAppearance(cloned);
     cloned.scale.setScalar(modelScale);
     cloned.position.copy(originalPos);
+    if (currentLevel.spawnRotY) cloned.rotation.y = currentLevel.spawnRotY;
     cloned.traverse(c => { if (c.isBone) { c.userData.origPos = c.position.clone(); c.userData.origQuat = c.quaternion.clone(); c.userData.origScale = c.scale.clone(); } });
     scene.add(cloned);
     gltfScene = cloned;
@@ -3095,11 +3097,33 @@ function activateAllMfers() {
     return;
   }
 
+  // Find the launcher position for proximity check
+  const launcherPm = placedMfers.find(pm => pm.isLauncher);
+  let launcherPos = null;
+  if (launcherPm) {
+    launcherPos = new THREE.Vector3(
+      launcherPm.scene.position.x + modelCenter.x * modelScale,
+      launcherPm.scene.position.y,
+      launcherPm.scene.position.z + modelCenter.z * modelScale
+    );
+  }
+  const LAUNCH_RADIUS = 4; // mfers within this distance of launcher also get launched
+
   // Activate placed mfers
   const staying = [];
   for (const pm of placedMfers) {
-    if (pm.isLauncher) {
-      // The initial mfer — launch it (e.g. down the stairs)
+    // Check if this mfer should be launched (is the launcher, or close to it)
+    let shouldLaunch = pm.isLauncher;
+    if (!shouldLaunch && launcherPos) {
+      const mx = pm.scene.position.x + modelCenter.x * modelScale;
+      const my = pm.scene.position.y;
+      const mz = pm.scene.position.z + modelCenter.z * modelScale;
+      const dist = Math.sqrt((mx - launcherPos.x) ** 2 + (my - launcherPos.y) ** 2 + (mz - launcherPos.z) ** 2);
+      shouldLaunch = dist < LAUNCH_RADIUS;
+    }
+
+    if (shouldLaunch) {
+      // Launch this mfer
       if (pm.mixer) pm.mixer.stopAllAction();
       const mfer = createRagdoll(pm.scene);
       if (mfer) {
@@ -3252,6 +3276,7 @@ function reset() {
     applyRandomAppearance(cloned);
     cloned.scale.setScalar(modelScale);
     cloned.position.copy(originalPos);
+    if (currentLevel.spawnRotY) cloned.rotation.y = currentLevel.spawnRotY;
     cloned.traverse((child) => {
       if (child.isBone) { child.userData.origPos = child.position.clone(); child.userData.origQuat = child.quaternion.clone(); child.userData.origScale = child.scale.clone(); }
     });
@@ -3307,6 +3332,7 @@ function clearAll() {
     applyRandomAppearance(cloned);
     cloned.scale.setScalar(modelScale);
     cloned.position.copy(originalPos);
+    if (currentLevel.spawnRotY) cloned.rotation.y = currentLevel.spawnRotY;
     cloned.traverse(c => { if (c.isBone) { c.userData.origPos = c.position.clone(); c.userData.origQuat = c.quaternion.clone(); c.userData.origScale = c.scale.clone(); } });
     scene.add(cloned);
     gltfScene = cloned;
