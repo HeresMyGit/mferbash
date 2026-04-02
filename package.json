@@ -15,7 +15,6 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
     "gifenc": "^1.0.3",
-    "mp4-muxer": "^5.2.2",
     "postprocessing": "^6.39.0",
     "three": "^0.183.2",
     "three-stdlib": "^2.36.1",
