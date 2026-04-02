@@ -338,13 +338,189 @@ function traitsToMeshes(traits) {
   return meshes;
 }
 
-function applyRandomAppearance(targetScene) {
-  const traits = generateRandomTraits();
+// Map metadata trait values to our TRAIT_MESH_MAPPING keys
+const META_TO_TRAIT = {
+  // type
+  'plain mfer': { cat: 'type', val: 'plain' },
+  'charcoal mfer': { cat: 'type', val: 'charcoal' },
+  'zombie mfer': { cat: 'type', val: 'zombie' },
+  'ape mfer': { cat: 'type', val: 'ape' },
+  'alien mfer': { cat: 'type', val: 'alien' },
+  'metal mfer': { cat: 'type', val: 'metal' },
+  'based $mfer': { cat: 'type', val: 'based' },
+  // eyes
+  'regular eyes': { cat: 'eyes', val: 'regular' },
+  'vr': { cat: 'eyes', val: 'vr' },
+  'shades': { cat: 'eyes', val: 'shades' },
+  'purple shades': { cat: 'eyes', val: 'purple_shades' },
+  'nerd glasses': { cat: 'eyes', val: 'nerd' },
+  'trippy': { cat: 'eyes', val: 'trippy' },
+  'matrix': { cat: 'eyes', val: 'matrix' },
+  '3d glasses': { cat: 'eyes', val: '3d' },
+  'eye mask': { cat: 'eyes', val: 'eye_mask' },
+  'eyepatch': { cat: 'eyes', val: 'eyepatch' },
+  'zombie eyes': { cat: 'eyes', val: 'zombie' },
+  'alien eyes': { cat: 'eyes', val: 'alien' },
+  'red eyes': { cat: 'eyes', val: 'red' },
+  'metal eyes': { cat: 'eyes', val: 'metal' },
+  'mfercoin eyes': { cat: 'eyes', val: 'mfercoin' },
+  // mouth
+  'flat': { cat: 'mouth', val: 'flat' },
+  'smile': { cat: 'mouth', val: 'smile' },
+  // headphones
+  'white headphones': { cat: 'headphones', val: 'white' },
+  'red headphones': { cat: 'headphones', val: 'red' },
+  'green headphones': { cat: 'headphones', val: 'green' },
+  'pink headphones': { cat: 'headphones', val: 'pink' },
+  'gold headphones': { cat: 'headphones', val: 'gold' },
+  'blue headphones': { cat: 'headphones', val: 'blue' },
+  'black headphones': { cat: 'headphones', val: 'black' },
+  'lined headphones': { cat: 'headphones', val: 'lined' },
+  'black square headphones': { cat: 'headphones', val: 'black_square' },
+  'blue square headphones': { cat: 'headphones', val: 'blue_square' },
+  'gold square headphones': { cat: 'headphones', val: 'gold_square' },
+  // hat over headphones
+  'cowboy hat': { cat: 'hat_over_headphones', val: 'cowboy' },
+  'top hat': { cat: 'hat_over_headphones', val: 'top' },
+  'pilot helmet': { cat: 'hat_over_headphones', val: 'pilot' },
+  'hoodie gray': { cat: 'hat_over_headphones', val: 'hoodie_gray' },
+  'hoodie pink': { cat: 'hat_over_headphones', val: 'hoodie_pink' },
+  'hoodie red': { cat: 'hat_over_headphones', val: 'hoodie_red' },
+  'hoodie blue': { cat: 'hat_over_headphones', val: 'hoodie_blue' },
+  'hoodie white': { cat: 'hat_over_headphones', val: 'hoodie_white' },
+  'hoodie green': { cat: 'hat_over_headphones', val: 'hoodie_green' },
+  'larva mfer': { cat: 'hat_over_headphones', val: 'larva_mfer' },
+  // hat under headphones
+  'bandana dark gray': { cat: 'hat_under_headphones', val: 'bandana_dark_gray' },
+  'bandana red': { cat: 'hat_under_headphones', val: 'bandana_red' },
+  'bandana blue': { cat: 'hat_under_headphones', val: 'bandana_blue' },
+  'knit kc': { cat: 'hat_under_headphones', val: 'knit_kc' },
+  'knit las vegas': { cat: 'hat_under_headphones', val: 'knit_las_vegas' },
+  'knit new york': { cat: 'hat_under_headphones', val: 'knit_new_york' },
+  'knit san fran': { cat: 'hat_under_headphones', val: 'knit_san_fran' },
+  'knit miami': { cat: 'hat_under_headphones', val: 'knit_miami' },
+  'knit chicago': { cat: 'hat_under_headphones', val: 'knit_chicago' },
+  'knit atlanta': { cat: 'hat_under_headphones', val: 'knit_atlanta' },
+  'knit cleveland': { cat: 'hat_under_headphones', val: 'knit_cleveland' },
+  'knit dallas': { cat: 'hat_under_headphones', val: 'knit_dallas' },
+  'knit baltimore': { cat: 'hat_under_headphones', val: 'knit_baltimore' },
+  'knit buffalo': { cat: 'hat_under_headphones', val: 'knit_buffalo' },
+  'knit pittsburgh': { cat: 'hat_under_headphones', val: 'knit_pittsburgh' },
+  'cap monochrome': { cat: 'hat_under_headphones', val: 'cap_monochrome' },
+  'cap based blue': { cat: 'hat_under_headphones', val: 'cap_based_blue' },
+  'cap purple': { cat: 'hat_under_headphones', val: 'cap_purple' },
+  'beanie monochrome': { cat: 'hat_under_headphones', val: 'beanie_monochrome' },
+  'beanie': { cat: 'hat_under_headphones', val: 'beanie' },
+  'headband blue/green': { cat: 'hat_under_headphones', val: 'headband_blue_green' },
+  'headband green/white': { cat: 'hat_under_headphones', val: 'headband_green_white' },
+  'headband blue/red': { cat: 'hat_under_headphones', val: 'headband_blue_red' },
+  'headband pink/white': { cat: 'hat_under_headphones', val: 'headband_pink_white' },
+  'headband blue/white': { cat: 'hat_under_headphones', val: 'headband_blue_white' },
+  // short hair
+  'mohawk purple': { cat: 'short_hair', val: 'mohawk_purple' },
+  'mohawk red': { cat: 'short_hair', val: 'mohawk_red' },
+  'mohawk pink': { cat: 'short_hair', val: 'mohawk_pink' },
+  'mohawk black': { cat: 'short_hair', val: 'mohawk_black' },
+  'mohawk yellow': { cat: 'short_hair', val: 'mohawk_yellow' },
+  'mohawk green': { cat: 'short_hair', val: 'mohawk_green' },
+  'mohawk blue': { cat: 'short_hair', val: 'mohawk_blue' },
+  'messy black': { cat: 'short_hair', val: 'messy_black' },
+  'messy yellow': { cat: 'short_hair', val: 'messy_yellow' },
+  'messy red': { cat: 'short_hair', val: 'messy_red' },
+  'messy purple': { cat: 'short_hair', val: 'messy_purple' },
+  // long hair
+  'long hair yellow': { cat: 'long_hair', val: 'long_yellow' },
+  'long hair black': { cat: 'long_hair', val: 'long_black' },
+  'long hair curly': { cat: 'long_hair', val: 'long_curly' },
+  // shirt
+  'collared shirt pink': { cat: 'shirt', val: 'collared_pink' },
+  'collared shirt green': { cat: 'shirt', val: 'collared_green' },
+  'collared shirt yellow': { cat: 'shirt', val: 'collared_yellow' },
+  'collared shirt white': { cat: 'shirt', val: 'collared_white' },
+  'collared shirt turquoise': { cat: 'shirt', val: 'collared_turquoise' },
+  'collared shirt blue': { cat: 'shirt', val: 'collared_blue' },
+  'hoodie down red': { cat: 'shirt', val: 'hoodie_down_red' },
+  'hoodie down pink': { cat: 'shirt', val: 'hoodie_down_pink' },
+  'hoodie down white': { cat: 'shirt', val: 'hoodie_down_white' },
+  'hoodie down green': { cat: 'shirt', val: 'hoodie_down_green' },
+  'hoodie down gray': { cat: 'shirt', val: 'hoodie_down_gray' },
+  'hoodie down blue': { cat: 'shirt', val: 'hoodie_down_blue' },
+  // watch
+  'sub blue': { cat: 'watch', val: 'sub_blue' },
+  'sub lantern (green)': { cat: 'watch', val: 'sub_lantern_green' },
+  'sub cola (blue/red)': { cat: 'watch', val: 'sub_cola' },
+  'sub turquoise': { cat: 'watch', val: 'sub_turquoise' },
+  'sub bat (blue/black)': { cat: 'watch', val: 'sub_bat' },
+  'sub black': { cat: 'watch', val: 'sub_black' },
+  'sub rose': { cat: 'watch', val: 'sub_rose' },
+  'sub red': { cat: 'watch', val: 'sub_red' },
+  'oyster silver': { cat: 'watch', val: 'oyster_silver' },
+  'oyster gold': { cat: 'watch', val: 'oyster_gold' },
+  'argo white': { cat: 'watch', val: 'argo_white' },
+  'argo black': { cat: 'watch', val: 'argo_black' },
+  'timex': { cat: 'watch', val: 'timex' },
+  // chain
+  'silver chain': { cat: 'chain', val: 'silver' },
+  'gold chain': { cat: 'chain', val: 'gold' },
+  'onchain': { cat: 'chain', val: 'onchain' },
+  // beard
+  'full beard': { cat: 'beard', val: 'full' },
+  'flat beard': { cat: 'beard', val: 'flat' },
+  // smoke
+  'pipe': { cat: 'smoke', val: 'pipe' },
+  'pipe brown': { cat: 'smoke', val: 'pipe_brown' },
+  'cig white': { cat: 'smoke', val: 'cig_white' },
+  'cig black': { cat: 'smoke', val: 'cig_black' },
+};
+
+const METADATA_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/private/metadata/';
+let mferIdMode = false; // false = random, true = use specific ID
+let mferIdValue = null; // cached traits from metadata
+let mferIdLoading = false;
+
+async function fetchMferTraits(id) {
+  try {
+    mferIdLoading = true;
+    const res = await fetch(METADATA_URL + id + '.json');
+    const data = await res.json();
+    const traits = {};
+    for (const attr of data.attributes) {
+      const key = attr.value.toLowerCase();
+      const mapping = META_TO_TRAIT[key];
+      if (mapping) {
+        traits[mapping.cat] = mapping.val;
+      }
+    }
+    // Ensure required traits have defaults
+    if (!traits.type) traits.type = 'plain';
+    if (!traits.eyes) traits.eyes = 'regular';
+    if (!traits.mouth) traits.mouth = 'flat';
+    if (!traits.headphones) traits.headphones = 'black';
+    mferIdValue = traits;
+    mferIdLoading = false;
+    console.log('Loaded mfer #' + id + ':', traits);
+    return traits;
+  } catch (e) {
+    console.warn('Failed to load mfer #' + id, e);
+    mferIdLoading = false;
+    return null;
+  }
+}
+
+function applyAppearance(targetScene, traits) {
   const meshes = traitsToMeshes(traits);
-  console.log('Random mfer:', traits.type, '| traits:', Object.keys(traits).length);
   targetScene.traverse((child) => {
     if (child.isMesh) child.visible = meshes.has(child.name);
   });
+}
+
+function applyRandomAppearance(targetScene) {
+  if (mferIdMode && mferIdValue) {
+    applyAppearance(targetScene, mferIdValue);
+    return;
+  }
+  const traits = generateRandomTraits();
+  applyAppearance(targetScene, traits);
 }
 
 // Map accessory mesh names to which ragdoll segment drives their velocity when detached.
@@ -407,6 +583,94 @@ function doImpactCapture() {
   gifFinalFrames = [...gifFrameBuffer];
   gifCapturing = true;
   gifPostFrames = Math.round(GIF_POST * GIF_FPS);
+}
+
+function detachOneAccessory(mfer) {
+  // Find one random visible detachable accessory
+  const candidates = [];
+  mfer.scene.traverse((child) => {
+    if (child.isMesh && child.visible && getDetachSegment(child.name)) {
+      candidates.push(child);
+    }
+  });
+  if (candidates.length === 0) return false;
+
+  const mesh = candidates[Math.floor(Math.random() * candidates.length)];
+  const segName = getDetachSegment(mesh.name);
+  mesh.visible = false;
+
+  if (!mfer.detachedPieces) mfer.detachedPieces = [];
+
+  let bakedGeo;
+  if (mesh.isSkinnedMesh && mesh.skeleton) {
+    bakedGeo = mesh.geometry.clone();
+    const srcPos = mesh.geometry.attributes.position;
+    const dstPos = bakedGeo.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < srcPos.count; i++) {
+      v.fromBufferAttribute(srcPos, i);
+      mesh.applyBoneTransform(i, v);
+      dstPos.setXYZ(i, v.x, v.y, v.z);
+    }
+    dstPos.needsUpdate = true;
+  } else {
+    bakedGeo = mesh.geometry.clone();
+  }
+  bakedGeo.computeBoundingBox();
+  bakedGeo.computeBoundingSphere();
+
+  const localCenter = new THREE.Vector3();
+  bakedGeo.boundingBox.getCenter(localCenter);
+  const pos = bakedGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    pos.setXYZ(i, pos.getX(i) - localCenter.x, pos.getY(i) - localCenter.y, pos.getZ(i) - localCenter.z);
+  }
+  pos.needsUpdate = true;
+  bakedGeo.computeBoundingSphere();
+
+  const worldCenter = localCenter.applyMatrix4(mesh.matrixWorld);
+  const wPos = new THREE.Vector3(), wQuat = new THREE.Quaternion(), wScale = new THREE.Vector3();
+  mesh.matrixWorld.decompose(wPos, wQuat, wScale);
+
+  const detached = new THREE.Mesh(bakedGeo, mesh.material);
+  detached.position.copy(worldCenter);
+  detached.quaternion.copy(wQuat);
+  detached.scale.copy(wScale);
+  detached.castShadow = true;
+  detached.frustumCulled = false;
+  scene.add(detached);
+
+  const bboxSize = new THREE.Vector3();
+  mesh.geometry.boundingBox || mesh.geometry.computeBoundingBox();
+  mesh.geometry.boundingBox.getSize(bboxSize);
+  bboxSize.multiplyScalar(0.5 * modelScale);
+  const hx = Math.max(bboxSize.x, 0.02), hy = Math.max(bboxSize.y, 0.02), hz = Math.max(bboxSize.z, 0.02);
+
+  const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+    .setTranslation(worldCenter.x, worldCenter.y, worldCenter.z)
+    .setRotation({ x: wQuat.x, y: wQuat.y, z: wQuat.z, w: wQuat.w })
+    .setLinearDamping(0.2).setAngularDamping(0.3);
+  const body = world.createRigidBody(bodyDesc);
+  world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setMass(0.3).setRestitution(0.5).setFriction(0.4), body);
+
+  const segBody = mfer.ragdollBodies[segName];
+  if (segBody) {
+    const sv = segBody.linvel();
+    const sa = segBody.angvel();
+    body.setLinvel({
+      x: sv.x * 0.4 + (Math.random() - 0.5) * 2,
+      y: sv.y * 0.4 + Math.random() * 2 + 1,
+      z: sv.z * 0.4 + (Math.random() - 0.5) * 2,
+    }, true);
+    body.setAngvel({
+      x: sa.x * 0.3 + (Math.random() - 0.5) * 4,
+      y: sa.y * 0.3 + (Math.random() - 0.5) * 4,
+      z: sa.z * 0.3 + (Math.random() - 0.5) * 4,
+    }, true);
+  }
+
+  mfer.detachedPieces.push({ mesh: detached, body, geo: bakedGeo });
+  return true;
 }
 
 function detachAccessories(mfer) {
@@ -974,6 +1238,30 @@ async function init() {
     });
   });
 
+  // Mfer ID toggle
+  const mferModeBtn = document.getElementById('mfer-mode-btn');
+  const mferIdInput = document.getElementById('mfer-id-input');
+  mferModeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    mferIdMode = !mferIdMode;
+    mferModeBtn.textContent = mferIdMode ? 'id #' : 'random';
+    mferIdInput.style.display = mferIdMode ? '' : 'none';
+    if (!mferIdMode) mferIdValue = null;
+  });
+  mferIdInput.addEventListener('click', (e) => e.stopPropagation());
+  mferIdInput.addEventListener('touchstart', (e) => e.stopPropagation());
+  let mferIdTimeout = null;
+  mferIdInput.addEventListener('input', (e) => {
+    clearTimeout(mferIdTimeout);
+    const id = parseInt(e.target.value);
+    if (isNaN(id) || id < 0 || id > 10020) return;
+    mferIdTimeout = setTimeout(async () => {
+      await fetchMferTraits(id);
+      // Update the idle mfer if it hasn't been placed yet
+      if (mferIdValue && gltfScene) applyAppearance(gltfScene, mferIdValue);
+    }, 300);
+  });
+
   document.getElementById('loading').style.display = 'none';
   document.getElementById('go-btn').style.display = 'block';
   document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
@@ -1359,7 +1647,7 @@ function createTruckHitLevel() {
                       body.setAngvel({ x: (Math.random() - 0.5) * 10, y: (Math.random() - 0.5) * 8, z: (Math.random() - 0.5) * 10 }, true);
                     }
                     mfer.ragdollActive = true;
-                    detachAccessories(mfer);
+                    mfer.canDetach = true;
                     mfers.push(mfer);
                   }
                 } else {
@@ -1489,7 +1777,7 @@ function createTruckHitLevel() {
                   }
                   mfer.ragdollActive = true;
                   captureImpactShot(mfer);
-                  detachAccessories(mfer);
+                  mfer.canDetach = true;
                   mfers.push(mfer);
                 }
               } else {
@@ -1812,7 +2100,7 @@ function createWreckingBallLevel() {
                   }
                   mfer.ragdollActive = true;
                   captureImpactShot(mfer);
-                  detachAccessories(mfer);
+                  mfer.canDetach = true;
                   mfers.push(mfer);
                 }
               } else {
@@ -2279,8 +2567,8 @@ function createPressLevel() {
               pressState.currentY = pressState.minY;
               pressState.phase = 'holding';
               pressState.holdTimer = 2;
-              // Crush! Detach all accessories
-              for (const mfer of mfers) detachAccessories(mfer);
+              // Crush! Force all accessories off at once
+              for (const mfer of mfers) { detachAccessories(mfer); mfer.canDetach = false; }
             }
           } else if (pressState.phase === 'holding') {
             pressState.holdTimer -= dt;
@@ -3169,8 +3457,8 @@ function onClick(e) {
       if (!worldPos) return;
     }
 
-    // Move the initial idle mfer into placedMfers on first placement click
     if (gltfScene) {
+      // First click: lock in the initial mfer, don't spawn a second one
       const ix = gltfScene.position.x + modelCenter.x * modelScale;
       const iy = gltfScene.position.y;
       const iz = gltfScene.position.z + modelCenter.z * modelScale;
@@ -3178,12 +3466,13 @@ function onClick(e) {
       placedMfers.push({ scene: gltfScene, mixer, isLauncher: true });
       gltfScene = null;
       mixer = null;
-    }
-
-    const pm = spawnIdleMfer(worldPos, rotY);
-    if (pm) {
-      placedMfers.push(pm);
-      savedSpawns.push({ x: worldPos.x, y: worldPos.y, z: worldPos.z, rotY: rotY || 0 });
+    } else {
+      // Subsequent clicks: spawn new mfer at click position
+      const pm = spawnIdleMfer(worldPos, rotY);
+      if (pm) {
+        placedMfers.push(pm);
+        savedSpawns.push({ x: worldPos.x, y: worldPos.y, z: worldPos.z, rotY: rotY || 0 });
+      }
     }
 
     const count = placedMfers.length;
@@ -3481,6 +3770,20 @@ function animate() {
         piece.mesh.quaternion.set(r.x, r.y, r.z, r.w);
       }
     }
+
+    // Gradual accessory detach — velocity-based chance per frame
+    if (mfer.canDetach) {
+      const hips = mfer.ragdollBodies['hips'];
+      if (hips) {
+        const v = hips.linvel();
+        const speed = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        // Higher speed = higher chance. At speed 10+, ~15% per frame. At speed 2, ~3%.
+        const chance = Math.min(0.15, speed * 0.015);
+        if (Math.random() < chance) {
+          if (!detachOneAccessory(mfer)) mfer.canDetach = false; // no more to detach
+        }
+      }
+    }
   }
 
   // Drain collision events — activate ragdolls + convert standing mfers on hit
@@ -3497,7 +3800,7 @@ function animate() {
         const s = settings.spin;
         hb.setAngvel({ x: (Math.random() - 0.5) * s, y: (Math.random() - 0.5) * s * 0.5, z: (Math.random() - 0.5) * s }, true);
       }
-      detachAccessories(mfer);
+      mfer.canDetach = true;
     }
     // Check if any standing mfer's trigger capsule got hit
     for (const pm of placedMfers) {
@@ -3511,7 +3814,7 @@ function animate() {
       if (mfer.detachAfter && now >= mfer.detachAfter) {
         mfer.detachAfter = null;
         captureImpactShot(mfer);
-        detachAccessories(mfer);
+        mfer.canDetach = true;
       }
     }
     // Level-specific collision handling
