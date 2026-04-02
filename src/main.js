@@ -682,17 +682,46 @@ async function init() {
   });
   window.addEventListener('mouseup', () => { painting = false; paintedThisClick = !!lastPaintPos; });
   window.addEventListener('click', onClick);
+  // Touch handling: 1 finger = place, 2 fingers = camera
+  let touchMode = null; // 'place', 'camera'
+  let lastTouchX = 0, lastTouchY = 0;
+  let lastPinchDist = 0;
+
   window.addEventListener('touchstart', (e) => {
-    if (e.target === renderer.domElement) {
-      e.preventDefault();
+    if (e.target !== renderer.domElement) return;
+    e.preventDefault();
+
+    if (e.touches.length === 1) {
+      touchMode = 'place';
       painting = true;
       lastPaintPos = null;
       onClick(e);
+    } else if (e.touches.length >= 2) {
+      touchMode = 'camera';
+      painting = false;
+      const t0 = e.touches[0], t1 = e.touches[1];
+      lastTouchX = (t0.clientX + t1.clientX) / 2;
+      lastTouchY = (t0.clientY + t1.clientY) / 2;
+      lastPinchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      // Auto-switch to free cam
+      if (cameraMode === 'follow') {
+        cameraMode = 'free';
+        orbitControls.enabled = true;
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
+        document.getElementById('cam-toggle').textContent = 'cam: free';
+        document.getElementById('cam-toggle').classList.add('active');
+      }
     }
   }, { passive: false });
+
   window.addEventListener('touchmove', (e) => {
-    if (e.target === renderer.domElement && painting && gamePhase === 'placing') {
-      e.preventDefault();
+    if (e.target !== renderer.domElement) return;
+    e.preventDefault();
+
+    if (touchMode === 'place' && e.touches.length === 1 && gamePhase === 'placing') {
+      // Single finger drag — paint mfers
       const worldPos = getClickWorldPos(e);
       if (worldPos) {
         const now = performance.now();
@@ -707,9 +736,45 @@ async function init() {
           }
         }
       }
+    } else if (e.touches.length >= 2) {
+      touchMode = 'camera';
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const midX = (t0.clientX + t1.clientX) / 2;
+      const midY = (t0.clientY + t1.clientY) / 2;
+      const pinchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+
+      // Two-finger drag = orbit (horizontal = rotate, vertical = tilt)
+      const dx = midX - lastTouchX;
+      const dy = midY - lastTouchY;
+      camera.rotateY(-dx * 0.005);
+      camera.rotateX(-dy * 0.005);
+
+      // Pinch = zoom
+      if (lastPinchDist > 0) {
+        const scale = pinchDist / lastPinchDist;
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        camera.position.addScaledVector(fwd, (scale - 1) * 8);
+      }
+
+      // Update orbit target
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
+
+      lastTouchX = midX;
+      lastTouchY = midY;
+      lastPinchDist = pinchDist;
     }
   }, { passive: false });
-  window.addEventListener('touchend', () => { painting = false; });
+
+  window.addEventListener('touchend', (e) => {
+    painting = false;
+    if (e.touches.length < 2) {
+      touchMode = null;
+      lastPinchDist = 0;
+    }
+  });
   window.addEventListener('keydown', (e) => {
     keysDown.add(e.key.toLowerCase());
     if (e.key === 'b' || e.key === 'B') {
