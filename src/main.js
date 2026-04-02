@@ -1420,7 +1420,7 @@ async function init() {
 }
 
 
-const LEVEL_FACTORIES = [createStairLevel, createTruckHitLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level];
+const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level];
 
 function getLevelCtx() {
   return {
