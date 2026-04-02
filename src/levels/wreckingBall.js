@@ -356,6 +356,7 @@ export default function createWreckingBallLevel(ctx) {
                   }
                   mfer.ragdollActive = true;
                   ctx.captureImpactShot(mfer);
+                  if (ctx.playWreckingHit) ctx.playWreckingHit();
                   mfer.canDetach = true;
                   ctx.mfers.push(mfer);
                 }

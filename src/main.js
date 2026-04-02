@@ -11,6 +11,7 @@ import createPachinkoLevel from './levels/pachinko.js';
 import createPressLevel from './levels/press.js';
 import createCannonLevel from './levels/cannon.js';
 import createCannonball2Level from './levels/cannonball.js';
+import { playImpact, playPop, playClick, playBoom, playHorn, playHiss, playCrush, playWreckingHit } from './sounds.js';
 
 const MODEL_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/builders/mfermashup.glb';
 
@@ -677,6 +678,7 @@ function detachOneAccessory(mfer) {
   }
 
   mfer.detachedPieces.push({ mesh: detached, body, geo: bakedGeo });
+  playPop();
   return true;
 }
 
@@ -1285,6 +1287,7 @@ function getLevelCtx() {
     set placedMfers(v) { placedMfers = v; },
     get mfers() { return mfers; },
     createRagdoll, captureImpactShot, detachAccessories,
+    playImpact, playBoom, playHorn, playHiss, playCrush, playWreckingHit,
   };
 }
 
@@ -1887,6 +1890,7 @@ function onClick(e) {
 }
 
 function onGo() {
+  playClick();
   gamePhase = 'playing';
   if (ghostPreview) ghostPreview.visible = false;
   impactShotTaken = false;
@@ -2191,9 +2195,22 @@ function animate() {
     if (!started) return;
     // Activate falling ragdolls (pre-impact → post-impact)
     for (const mfer of mfers) {
-      if (mfer.ragdollActive) continue;
+      if (mfer.ragdollActive) {
+        // Already active — play collision sound based on velocity
+        const hb = mfer.ragdollBodies['hips'];
+        if (hb && (!mfer.lastImpactSound || performance.now() - mfer.lastImpactSound > 150)) {
+          const v = hb.linvel();
+          const speed = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+          if (speed > 1) {
+            playImpact(speed);
+            mfer.lastImpactSound = performance.now();
+          }
+        }
+        continue;
+      }
       mfer.ragdollActive = true;
       captureImpactShot(mfer);
+      playImpact(12);
       const hb = mfer.ragdollBodies['hips'];
       if (hb) {
         const s = settings.spin;
@@ -2246,6 +2263,7 @@ function animate() {
       mfer.canDetach = true;
       captureImpactShot(mfer);
       // Transfer velocity from whatever hit this mfer
+      playImpact(6);
       const hitVel = hitByMap.get(pm);
       if (hitVel) {
         for (const body of Object.values(mfer.ragdollBodies)) {

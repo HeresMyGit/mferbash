@@ -186,6 +186,7 @@ export default function createPressLevel(ctx) {
               pressState.phase = 'holding';
               pressState.holdTimer = 2;
               for (const mfer of ctx.mfers) { ctx.detachAccessories(mfer); mfer.canDetach = false; }
+              if (ctx.playCrush) ctx.playCrush();
             }
           } else if (pressState.phase === 'holding') {
             pressState.holdTimer -= dt;
@@ -377,6 +378,7 @@ export default function createPressLevel(ctx) {
       if (lp.pressState) {
         lp.pressState.active = true;
         lp.pressState.phase = 'pressing';
+        if (ctx.playHiss) ctx.playHiss();
       }
     },
   };

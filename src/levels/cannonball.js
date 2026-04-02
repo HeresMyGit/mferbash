@@ -258,6 +258,7 @@ export default function createCannonball2Level(ctx) {
             if (state.chargeTime >= 0.8) {
               state.fired = true;
               fuse.visible = false;
+              if (ctx.playBoom) ctx.playBoom();
 
               // Give all placed ctx.mfers trigger capsules — they stay idle until the ball hits them
               for (const pm of ctx.placedMfers) {

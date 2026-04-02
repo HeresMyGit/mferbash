@@ -459,8 +459,9 @@ export default function createTruckHitLevel(ctx) {
           // Traffic light: switch to red as truck approaches
           if (truckState.currentX > -10 && !truckState.lightSwitched) {
             truckState.lightSwitched = true;
-            trafficLights[2].material.emissive.setHex(0x000000); // green off
-            trafficLights[0].material.emissive.setHex(0xff0000); // red on
+            trafficLights[2].material.emissive.setHex(0x000000);
+            trafficLights[0].material.emissive.setHex(0xff0000);
+            if (ctx.playHorn) ctx.playHorn();
           }
 
           if (!truckState.gonePhysics) {

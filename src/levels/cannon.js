@@ -262,6 +262,7 @@ export default function createCannonLevel(ctx) {
             if (cannonState.chargeTime >= 0.8) {
               cannonState.fired = true;
               fuse.visible = false;
+              if (ctx.playBoom) ctx.playBoom();
 
               // Smoke puff at cannon mouth
               const smokePuffs = [];
