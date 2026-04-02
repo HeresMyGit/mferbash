@@ -1594,8 +1594,8 @@ function createRagdoll(targetScene) {
 }
 
 function applyLaunchVelocity(mfer) {
-  // Strong push down the stairs (negative X) with forward tumble
   const speed = settings.launchSpeed * (4.5 + Math.random() * 3);
+  if (speed < 0.1) return; // no launch if speed is ~0
   const vel = {
     x: -speed - 6,
     y: -3,
@@ -1735,11 +1735,14 @@ function spawnIdleMfer(worldPos, rot) {
   cloned.scale.setScalar(modelScale);
   cloned.position.set(worldPos.x - modelCenter.x * modelScale, worldPos.y, worldPos.z - modelCenter.z * modelScale);
   if (typeof rot === 'number') {
-    cloned.rotation.y = rot; // legacy: single Y rotation
+    cloned.rotation.y = rot;
   } else if (rot) {
     if (rot.x) cloned.rotation.x = rot.x;
     if (rot.y) cloned.rotation.y = rot.y;
     if (rot.z) cloned.rotation.z = rot.z;
+  } else if (currentLevel && currentLevel.spawnRotY) {
+    // Apply level's default facing if no explicit rotation
+    cloned.rotation.y = currentLevel.spawnRotY;
   }
 
   cloned.traverse((child) => {
