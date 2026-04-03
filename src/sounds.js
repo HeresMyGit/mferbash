@@ -246,6 +246,52 @@ export function playWreckingHit() {
   debris.stop(ctx.currentTime + 0.9);
 }
 
+// Gunshot — sharp crack + punch
+export function playGunshot() {
+  const ctx = getCtx();
+  const t = ctx.currentTime;
+  const pitch = 0.9 + Math.random() * 0.2;
+
+  // Sharp transient crack — loud and snappy
+  const crack = ctx.createBufferSource();
+  crack.buffer = getNoiseBuffer();
+  const hpf = ctx.createBiquadFilter();
+  hpf.type = 'highpass';
+  hpf.frequency.value = 2500 * pitch;
+  const crackGain = ctx.createGain();
+  crackGain.gain.setValueAtTime(0.7, t);
+  crackGain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+  crack.connect(hpf).connect(crackGain).connect(ctx.destination);
+  crack.start(t);
+  crack.stop(t + 0.06);
+
+  // Mid punch body
+  const body = ctx.createBufferSource();
+  body.buffer = getNoiseBuffer();
+  const bpf = ctx.createBiquadFilter();
+  bpf.type = 'bandpass';
+  bpf.frequency.value = 600 * pitch;
+  bpf.Q.value = 1.5;
+  const bodyGain = ctx.createGain();
+  bodyGain.gain.setValueAtTime(0.6, t);
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  body.connect(bpf).connect(bodyGain).connect(ctx.destination);
+  body.start(t);
+  body.stop(t + 0.12);
+
+  // Low thump — chest punch
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(80 * pitch, t);
+  osc.frequency.exponentialRampToValueAtTime(20, t + 0.15);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.5, t);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  osc.connect(oscGain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.15);
+}
+
 // UI click — deep, satisfying thunk
 export function playClick() {
   const ctx = getCtx();

@@ -12,7 +12,8 @@ import createPachinkoLevel from './levels/pachinko.js';
 import createPressLevel from './levels/press.js';
 import createCannonLevel from './levels/cannon.js';
 import createCannonball2Level from './levels/cannonball.js';
-import { playImpact, playPop, playClick, playBoom, playHorn, playHiss, playCrush, playWreckingHit } from './sounds.js';
+import createFiringRangeLevel from './levels/firingRange.js';
+import { playImpact, playPop, playClick, playBoom, playHorn, playHiss, playCrush, playWreckingHit, playGunshot } from './sounds.js';
 
 const MODEL_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/builders/mfermashup.glb';
 
@@ -933,7 +934,7 @@ let savedSpawns = [];        // saved { x, y, z, rotY } for reset
 let orbitControls;
 let cameraMode = 'near'; // 'near', 'standard', 'distant', 'free'
 const CAM_MODES = ['near', 'standard', 'distant', 'free'];
-const CAM_ZOOM = { near: 0.7, standard: 1, distant: 2 };
+const CAM_ZOOM = { near: 1, standard: 1.5, distant: 2 };
 const keysDown = new Set();
 
 function applyCameraZoom() {
@@ -1479,7 +1480,7 @@ async function init() {
 }
 
 
-const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level];
+const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level, createFiringRangeLevel];
 
 function getLevelCtx() {
   return {
@@ -1488,7 +1489,7 @@ function getLevelCtx() {
     set placedMfers(v) { placedMfers = v; },
     get mfers() { return mfers; },
     createRagdoll, captureImpactShot, detachAccessories,
-    playImpact, playBoom, playHorn, playHiss, playCrush, playWreckingHit,
+    playImpact, playBoom, playHorn, playHiss, playCrush, playWreckingHit, playGunshot,
   };
 }
 
@@ -1551,8 +1552,19 @@ function switchLevel(index) {
   // Camera
   applyCameraZoom();
 
-  // Spawn idle mfer
-  if (originalGltf) {
+  // Spawn mfers
+  if (originalGltf && currentLevel.autoSpawn) {
+    // Auto-spawn multiple mfers at predefined positions
+    gltfScene = null;
+    mixer = null;
+    for (const sp of currentLevel.autoSpawn) {
+      const pm = spawnIdleMfer(sp, currentLevel.spawnRotY);
+      if (pm) {
+        placedMfers.push(pm);
+        savedSpawns.push({ x: sp.x, y: sp.y, z: sp.z, rotY: currentLevel.spawnRotY || 0 });
+      }
+    }
+  } else if (originalGltf) {
     const cloned = SkeletonUtils.clone(originalGltf.scene);
     cloned.traverse(c => { if (c.isMesh) { c.visible = false; c.castShadow = true; c.receiveShadow = true; c.frustumCulled = false; } });
     applyRandomAppearance(cloned);
@@ -1576,7 +1588,11 @@ function switchLevel(index) {
   updateLevelSliders(index);
 
   settled = false;
-  document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
+  if (currentLevel.autoSpawn) {
+    document.getElementById('instructions').textContent = `${placedMfers.length} mfers ready — click to add more`;
+  } else {
+    document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
+  }
   document.getElementById('score').textContent = '';
   document.getElementById('reset-btn').style.display = 'none';
   document.getElementById('clear-btn').style.display = 'none';
