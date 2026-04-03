@@ -1540,6 +1540,7 @@ function switchLevel(index) {
 
   currentLevelIndex = index;
   currentLevel = getLevel(index);
+  if (window.gtag) gtag('event', 'level_switch', { level: currentLevel.name });
   levelParts = currentLevel.build();
 
   // Apply level settings overrides
@@ -1686,6 +1687,7 @@ async function loadModel() {
 
 function createRagdoll(targetScene) {
   if (!targetScene) return null;
+  if (window.gtag) gtag('event', 'mfer_hit', { level: currentLevel.name });
 
   const mfer = { scene: targetScene, ragdollBodies: {}, ragdollJointRefs: [], ragdollSegData: {}, ragdollActive: false, debugMeshes: [], skipSync: 2 };
 
@@ -2093,6 +2095,7 @@ function onClick(e) {
     }
 
     const count = placedMfers.length;
+    if (window.gtag) gtag('event', 'mfer_placed', { level: currentLevel.name, count });
     document.getElementById('instructions').textContent = `${count} mfer${count > 1 ? 's' : ''} placed — click to add more`;
   } else {
     // Playing phase: spawn and immediately ragdoll at click position
@@ -2109,6 +2112,7 @@ function onClick(e) {
 
 function onGo() {
   playClick();
+  if (window.gtag) gtag('event', 'go_clicked', { level: currentLevel.name, mfer_count: placedMfers.length + (gltfScene ? 1 : 0) });
   gamePhase = 'playing';
   if (ghostPreview) ghostPreview.visible = false;
   impactShotTaken = false;
