@@ -942,15 +942,15 @@ let savedSpawns = [];        // saved { x, y, z, rotY } for reset
 
 // Camera
 let orbitControls;
-let cameraMode = 'near'; // 'near', 'standard', 'distant', 'free'
-const CAM_MODES = ['near', 'standard', 'distant', 'free'];
+let camZoom = 'near'; // 'near', 'standard', 'distant'
+let camFollow = true; // whether camera tracks mfers
+const CAM_ZOOMS = ['near', 'standard', 'distant'];
 const CAM_ZOOM = { near: 1, standard: 1.5, distant: 2 };
 const keysDown = new Set();
 
 function applyCameraZoom() {
-  if (cameraMode === 'free') return;
   const cam = currentLevel.cameraStart;
-  const zoom = CAM_ZOOM[cameraMode] || 1;
+  const zoom = CAM_ZOOM[camZoom] || 1;
   const lx = cam.lookAt[0], ly = cam.lookAt[1], lz = cam.lookAt[2];
   camera.position.set(
     lx + (cam.pos[0] - lx) * zoom,
@@ -1152,15 +1152,15 @@ async function init() {
       lastTouchX = (t0.clientX + t1.clientX) / 2;
       lastTouchY = (t0.clientY + t1.clientY) / 2;
       lastPinchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
-      // Auto-switch to free cam
-      if (cameraMode !== 'free') {
-        cameraMode = 'free';
+      // Disable follow on manual camera control
+      if (camFollow) {
+        camFollow = false;
         orbitControls.enabled = true;
         const fwd = new THREE.Vector3();
         camera.getWorldDirection(fwd);
         orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
-        document.getElementById('cam-toggle').textContent = 'cam: free';
-        document.getElementById('cam-toggle').classList.add('active');
+        document.getElementById('follow-toggle').textContent = 'follow: off';
+        document.getElementById('follow-toggle').classList.remove('active');
       }
     }
   }, { passive: false });
@@ -1232,31 +1232,31 @@ async function init() {
     }
   });
   window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
-  // Camera mode toggle — cycles: near → standard → distant → free
+  // Camera zoom toggle — cycles: near → standard → distant
   const camBtn = document.getElementById('cam-toggle');
-  let camHintShown = false;
   camBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const idx = CAM_MODES.indexOf(cameraMode);
-    cameraMode = CAM_MODES[(idx + 1) % CAM_MODES.length];
-    camBtn.textContent = 'cam: ' + cameraMode;
+    const idx = CAM_ZOOMS.indexOf(camZoom);
+    camZoom = CAM_ZOOMS[(idx + 1) % CAM_ZOOMS.length];
+    camBtn.textContent = 'cam: ' + camZoom;
+    if (camFollow) applyCameraZoom();
+  });
 
-    if (cameraMode === 'free') {
+  // Follow toggle
+  const followBtn = document.getElementById('follow-toggle');
+  followBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    camFollow = !camFollow;
+    followBtn.textContent = 'follow: ' + (camFollow ? 'on' : 'off');
+    if (camFollow) {
+      followBtn.classList.add('active');
+      orbitControls.enabled = false;
+    } else {
+      followBtn.classList.remove('active');
       orbitControls.enabled = true;
       const fwd = new THREE.Vector3();
       camera.getWorldDirection(fwd);
       orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
-      camBtn.classList.add('active');
-      if (!camHintShown) {
-        camHintShown = true;
-        const hint = document.getElementById('cam-hint');
-        hint.style.display = 'block';
-        setTimeout(() => { hint.style.display = 'none'; }, 4000);
-      }
-    } else {
-      orbitControls.enabled = false;
-      camBtn.classList.remove('active');
-      applyCameraZoom();
     }
   });
 
@@ -2183,11 +2183,11 @@ function cleanupMfers() {
 function reset() {
   cleanupMfers();
   gamePhase = 'placing';
-  if (cameraMode === 'free') {
-    cameraMode = 'near';
+  if (!camFollow) {
+    camFollow = true;
     orbitControls.enabled = false;
-    document.getElementById('cam-toggle').textContent = 'cam: near';
-    document.getElementById('cam-toggle').classList.remove('active');
+    document.getElementById('follow-toggle').textContent = 'follow: on';
+    document.getElementById('follow-toggle').classList.add('active');
   }
 
   // Re-create all mfers at their saved spawn positions
@@ -2551,7 +2551,7 @@ function animate() {
     updateScore();
     checkVideoSettled();
 
-    if (cameraMode !== 'free') {
+    if (camFollow) {
       // Camera follows latest mfer's hips with zoom level
       const latest = mfers[mfers.length - 1];
       const hipsBody = latest.ragdollBodies['hips'];
@@ -2559,7 +2559,7 @@ function animate() {
         const pos = hipsBody.translation();
         const vel = hipsBody.linvel();
         const camFollow = currentLevel.cameraFollow || { offX: 3, offY: 3.5, offZ: 10, minY: 3 };
-        const zoom = CAM_ZOOM[cameraMode] || 1;
+        const zoom = CAM_ZOOM[camZoom] || 1;
         const lookAheadX = vel.x * 0.15;
         const camTargetX = pos.x + camFollow.offX * zoom + lookAheadX;
         const camTargetY = Math.max(pos.y + camFollow.offY * zoom, camFollow.minY);
@@ -2595,13 +2595,13 @@ function animate() {
     camera.getWorldDirection(fwd);
 
     const moveKeys = ['w','a','s','d','q','e','z','x','arrowup','arrowdown','arrowleft','arrowright'];
-    if (cameraMode !== 'free' && moveKeys.some(k => keysDown.has(k))) {
-      cameraMode = 'free';
+    if (camFollow && moveKeys.some(k => keysDown.has(k))) {
+      camFollow = false;
       orbitControls.enabled = true;
-      document.getElementById('cam-toggle').textContent = 'cam: free';
-      document.getElementById('cam-toggle').classList.add('active');
+      document.getElementById('follow-toggle').textContent = 'follow: off';
+      document.getElementById('follow-toggle').classList.remove('active');
     }
-    if (orbitControls.enabled) {
+    if (!camFollow) {
       orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
     }
   }
@@ -2609,7 +2609,7 @@ function animate() {
   // Delayed impact photo capture (after bones have synced)
   if (pendingImpactMfer && --pendingImpactFrames <= 0) doImpactCapture();
 
-  if (cameraMode === 'free') orbitControls.update();
+  if (!camFollow) orbitControls.update();
   renderer.render(scene, camera);
 
   // Async photo capture — grabs the canvas after normal render, no extra work

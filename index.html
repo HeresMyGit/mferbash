@@ -55,6 +55,7 @@
     }
     .corner-btn:active { background: rgba(255,255,255,0.15); }
     .corner-btn.active { background: #e94560; border-color: #e94560; }
+    #follow-toggle { right: 196px; }
     #cam-toggle { right: 100px; }
     #toggle-controls { right: 12px; }
 
@@ -138,7 +139,8 @@
     @media (max-width: 768px) {
       #instructions { font-size: 12px; }
       .corner-btn { padding: 8px 10px; font-size: 11px; }
-      #cam-toggle { right: 90px; }
+      #follow-toggle { right: 172px; }
+      #cam-toggle { right: 82px; }
       #toggle-controls { right: 8px; }
       #controls { top: 40px; right: 8px; }
       #hud { padding: 6px 8px 8px; }
@@ -162,6 +164,7 @@
   <div id="loading">loading mfer...</div>
 
   <!-- Top-right corner -->
+  <button id="follow-toggle" class="corner-btn active">follow: on</button>
   <button id="cam-toggle" class="corner-btn">cam: near</button>
   <button id="toggle-controls" class="corner-btn">settings</button>
   <div id="cam-hint">WASD/arrows move, Q/E rotate, Z/X up/down<br>right-click drag to orbit, scroll to zoom</div>
