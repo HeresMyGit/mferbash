@@ -659,12 +659,14 @@ function captureImpactShot(mfer) {
   pendingImpactFrames = 3;
 }
 
-let impactPhotoMfer = null;
+let impactPhotoData = null; // dataUrl captured at impact time
+
+let needsPhotoCapture = false;
 
 function doImpactCapture() {
-  // Just store the mfer reference — photo rendered on demand when user clicks save
-  impactPhotoMfer = pendingImpactMfer;
   pendingImpactMfer = null;
+  needsPhotoCapture = true;
+
   document.getElementById('impact-captures').style.display = 'block';
   document.getElementById('impact-video-wrap').style.display = 'none';
 
@@ -1325,29 +1327,15 @@ async function init() {
     }
   });
 
-  // Photo button → render close-up, show in modal
+  // Photo button → show captured impact photo in modal
   document.getElementById('impact-photo').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!impactPhotoMfer) return;
-    const headBody = impactPhotoMfer.ragdollBodies['head'];
-    if (!headBody) return;
-
-    const hp = headBody.translation();
-    const savedPos = camera.position.clone();
-    const savedQuat = camera.quaternion.clone();
-    const faceDir = new THREE.Vector3();
-    camera.getWorldDirection(faceDir);
-    camera.position.set(hp.x - faceDir.x * 2, hp.y + 0.5, hp.z - faceDir.z * 2);
-    camera.lookAt(hp.x, hp.y, hp.z);
-    renderer.render(scene, camera);
-    const dataUrl = renderer.domElement.toDataURL('image/png');
-    camera.position.copy(savedPos);
-    camera.quaternion.copy(savedQuat);
+    if (!impactPhotoData) return;
 
     const img = document.createElement('img');
-    img.src = dataUrl;
+    img.src = impactPhotoData;
     img.style.cssText = 'max-width:100%;max-height:50vh;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
-    showSaveModal('impact photo', img, dataUrl, 'mfer-bash-impact.png', 'image/png');
+    showSaveModal('impact photo', img, impactPhotoData, 'mfer-bash-impact.jpg', 'image/jpeg');
   });
 
   // GIF button → encode, show in modal
@@ -2108,7 +2096,7 @@ function onGo() {
   gamePhase = 'playing';
   if (ghostPreview) ghostPreview.visible = false;
   impactShotTaken = false;
-  impactPhotoMfer = null;
+  impactPhotoData = null;
   gifFrameBuffer = [];
   gifFinalFrames = null;
   gifCapturing = false;
@@ -2577,6 +2565,14 @@ function animate() {
 
   if (cameraMode === 'free') orbitControls.update();
   renderer.render(scene, camera);
+
+  // Async photo capture — grabs the canvas after normal render, no extra work
+  if (needsPhotoCapture) {
+    needsPhotoCapture = false;
+    renderer.domElement.toBlob((blob) => {
+      if (blob) impactPhotoData = URL.createObjectURL(blob);
+    }, 'image/jpeg', 0.92);
+  }
 
   // GIF frame capture — just buffer raw frames, encode on demand
   if (gamePhase === 'playing') {
