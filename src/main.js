@@ -13,9 +13,63 @@ import createPressLevel from './levels/press.js';
 import createCannonLevel from './levels/cannon.js';
 import createCannonball2Level from './levels/cannonball.js';
 import createFiringRangeLevel from './levels/firingRange.js';
+import createPoolLevel from './levels/pool.js';
+import createGolfLevel from './levels/golf.js';
 import { playImpact, playPop, playClick, playBoom, playHorn, playHiss, playCrush, playWreckingHit, playGunshot } from './sounds.js';
 
 const MODEL_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/builders/mfermashup.glb';
+const MENU_GAMES = [
+  {
+    id: 'mfer-bash',
+    title: 'mfer bash',
+    subtitle: 'ragdoll wipeout sandbox',
+    description: 'Launch mfers through trucks, stairs, wrecking balls, cannons, and more.',
+    status: 'live now',
+    badge: '10 scenarios',
+    cta: 'play now',
+  },
+];
+const SCENE_LOOKS = {
+  menu: { color: 0x536b7d, fogDensity: 0.014 },
+  game: { color: 0x87ceeb, fogDensity: 0.012 },
+};
+const MENU_CAMERA_BASE = new THREE.Vector3(0, 4.7, 17);
+const MENU_CAMERA_TARGET = new THREE.Vector3(0, 2.2, -2.5);
+const MENU_LAYOUT = [
+  { x: -12.2, z: -10.4, scale: 1.42, rotY: 0.42 },
+  { x: -7.9, z: -5.9, scale: 1.18, rotY: 0.18 },
+  { x: -13.6, z: -1.4, scale: 1.04, rotY: 0.66 },
+  { x: -9.4, z: 2.1, scale: 0.96, rotY: 0.44 },
+  { x: -3.7, z: -12.4, scale: 1.08, rotY: -0.08 },
+  { x: 12.2, z: -10.6, scale: 1.45, rotY: -0.42 },
+  { x: 7.8, z: -5.8, scale: 1.18, rotY: -0.18 },
+  { x: 13.4, z: -1.2, scale: 1.04, rotY: -0.66 },
+  { x: 9.2, z: 2.1, scale: 0.96, rotY: -0.44 },
+  { x: 3.8, z: -12.2, scale: 1.08, rotY: 0.08 },
+  { x: -0.6, z: 4.8, scale: 0.82, rotY: Math.PI },
+  { x: 0.8, z: -3.9, scale: 0.88, rotY: Math.PI },
+];
+
+const mainMenuEl = document.getElementById('main-menu');
+const menuGameGridEl = document.getElementById('menu-game-grid');
+const menuBtnEl = document.getElementById('menu-btn');
+
+function renderGameMenu() {
+  menuGameGridEl.innerHTML = MENU_GAMES.map((game) => `
+    <button class="game-card" data-game="${game.id}" type="button">
+      <span class="game-card-top">
+        <span class="game-card-status">${game.status}</span>
+        <span>${game.badge}</span>
+      </span>
+      <span class="game-card-title">${game.title}</span>
+      <span class="game-card-subtitle">${game.subtitle}</span>
+      <span class="game-card-description">${game.description}</span>
+      <span class="game-card-cta">${game.cta}</span>
+    </button>
+  `).join('');
+}
+
+renderGameMenu();
 
 // Tunable settings (updated by UI sliders)
 const DEFAULTS = { gravity: 15, launchSpeed: 2, spin: 6, bounce: 0.3, damping: 2, dropHeight: 7, stairCount: 30, pachinkoDensity: 5, timeScale: 100 };
@@ -933,6 +987,11 @@ let eventQueue;
 let levelParts = null;
 let currentLevelIndex = 0;
 let currentLevel = null;
+let appMode = 'menu';
+let menuBackground = null;
+let menuHalo = null;
+let menuAvatars = [];
+let menuMixers = [];
 
 // Game phases: 'placing' (click to place, shift+drag to set height) → 'playing' (go pressed, physics active)
 let gamePhase = 'placing';
@@ -958,6 +1017,228 @@ function applyCameraZoom() {
     lz + (cam.pos[2] - lz) * zoom
   );
   camera.lookAt(lx, ly, lz);
+}
+
+function applySceneLook(mode) {
+  const look = SCENE_LOOKS[mode];
+  if (!look) return;
+  scene.background = new THREE.Color(look.color);
+  scene.fog = new THREE.FogExp2(look.color, look.fogDensity);
+}
+
+function setLevelVisibility(visible) {
+  if (!levelParts) return;
+  for (const mesh of levelParts.staticMeshes) mesh.visible = visible;
+  for (const { mesh } of levelParts.dynamicParts) mesh.visible = visible;
+  for (const helper of levelParts.helpers) {
+    if ('visible' in helper) helper.visible = visible;
+  }
+  for (const obj of levelParts.animatedObjects) {
+    if (obj.group) obj.group.visible = visible;
+  }
+}
+
+function syncFollowUi() {
+  const followBtn = document.getElementById('follow-toggle');
+  followBtn.textContent = 'follow: ' + (camFollow ? 'on' : 'off');
+  followBtn.classList.toggle('active', camFollow);
+}
+
+function stopCaptureSession() {
+  impactShotTaken = false;
+  pendingImpactMfer = null;
+  pendingImpactFrames = 0;
+  needsPhotoCapture = false;
+  gifFrameBuffer = [];
+  gifFinalFrames = null;
+  gifCapturing = false;
+  gifPostFrames = 0;
+  videoRecording = false;
+  if (videoRecorder && videoRecorder.state === 'recording') {
+    videoRecorder.onstop = null;
+    try { videoRecorder.stop(); } catch (e) {}
+  }
+  videoRecorder = null;
+  videoChunks = [];
+  if (videoUrl) {
+    URL.revokeObjectURL(videoUrl);
+    videoUrl = null;
+  }
+  if (impactPhotoData && impactPhotoData.startsWith('blob:')) {
+    URL.revokeObjectURL(impactPhotoData);
+  }
+  impactPhotoData = null;
+  document.getElementById('impact-captures').style.display = 'none';
+  document.getElementById('impact-full-video').style.display = 'none';
+  document.getElementById('impact-video-wrap').style.display = 'none';
+}
+
+function buildMenuBackground() {
+  if (menuBackground || !originalGltf) return;
+
+  menuBackground = new THREE.Group();
+  menuBackground.visible = false;
+
+  const backdrop = new THREE.Mesh(
+    new THREE.PlaneGeometry(44, 26),
+    new THREE.MeshBasicMaterial({ color: 0x244761, transparent: true, opacity: 0.58 })
+  );
+  backdrop.position.set(0, 6.2, -18.5);
+  menuBackground.add(backdrop);
+
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(14.5, 64),
+    new THREE.MeshStandardMaterial({ color: 0x395a71, roughness: 0.82, metalness: 0.1 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, -1.85, -2.2);
+  floor.receiveShadow = true;
+  menuBackground.add(floor);
+
+  const haloDisc = new THREE.Mesh(
+    new THREE.RingGeometry(10.2, 13.6, 64),
+    new THREE.MeshBasicMaterial({ color: 0x9af3eb, transparent: true, opacity: 0.14, side: THREE.DoubleSide })
+  );
+  haloDisc.rotation.x = -Math.PI / 2;
+  haloDisc.position.set(0, -1.78, -2.2);
+  menuBackground.add(haloDisc);
+
+  menuHalo = new THREE.Mesh(
+    new THREE.TorusGeometry(11.2, 0.14, 16, 96),
+    new THREE.MeshStandardMaterial({
+      color: 0xffb661,
+      emissive: 0xd86d2f,
+      emissiveIntensity: 1.35,
+      metalness: 0.7,
+      roughness: 0.18,
+    })
+  );
+  menuHalo.rotation.x = Math.PI / 2;
+  menuHalo.position.set(0, -1.75, -2.2);
+  menuBackground.add(menuHalo);
+
+  const pedestalMaterial = new THREE.MeshStandardMaterial({ color: 0x4b6172, roughness: 0.62, metalness: 0.18 });
+  const idleClip = originalGltf.animations.find(a => a.name.toLowerCase().includes('idle')) || originalGltf.animations[0];
+
+  for (const cfg of MENU_LAYOUT) {
+    const pedestalHeight = 0.8 + cfg.scale * 0.55;
+    const pedestal = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.72 * cfg.scale, 0.94 * cfg.scale, pedestalHeight, 6),
+      pedestalMaterial
+    );
+    pedestal.position.set(cfg.x, -1.85 + pedestalHeight / 2, cfg.z);
+    pedestal.castShadow = true;
+    pedestal.receiveShadow = true;
+    menuBackground.add(pedestal);
+
+    const wrapper = new THREE.Group();
+    wrapper.position.set(cfg.x, -1.85 + pedestalHeight, cfg.z);
+    wrapper.rotation.y = cfg.rotY;
+
+    const cloned = SkeletonUtils.clone(originalGltf.scene);
+    cloned.traverse((child) => {
+      if (child.isMesh) {
+        child.visible = false;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        child.frustumCulled = false;
+      }
+    });
+    applyRandomAppearance(cloned);
+
+    const scale = modelScale * cfg.scale;
+    cloned.scale.setScalar(scale);
+    cloned.position.set(-modelCenter.x * scale, 0, -modelCenter.z * scale);
+    wrapper.add(cloned);
+    menuBackground.add(wrapper);
+
+    if (idleClip) {
+      const menuMixer = new THREE.AnimationMixer(cloned);
+      menuMixer.clipAction(idleClip).play();
+      menuMixers.push(menuMixer);
+    }
+
+    menuAvatars.push({
+      wrapper,
+      baseY: wrapper.position.y,
+      baseRotY: cfg.rotY,
+      phase: Math.random() * Math.PI * 2,
+      bobSpeed: 0.7 + Math.random() * 0.5,
+      turnSpeed: 0.4 + Math.random() * 0.35,
+    });
+  }
+
+  scene.add(menuBackground);
+}
+
+function updateMenuScene(delta, now) {
+  const t = now * 0.001;
+  for (const mixer of menuMixers) mixer.update(delta * 0.6);
+  for (const avatar of menuAvatars) {
+    avatar.wrapper.position.y = avatar.baseY + Math.sin(t * avatar.bobSpeed + avatar.phase) * 0.12;
+    avatar.wrapper.rotation.y = avatar.baseRotY + Math.sin(t * avatar.turnSpeed + avatar.phase) * 0.12;
+  }
+  if (menuHalo) menuHalo.rotation.z += delta * 0.18;
+
+  camera.position.set(
+    MENU_CAMERA_BASE.x + Math.sin(t * 0.35) * 0.8,
+    MENU_CAMERA_BASE.y + Math.cos(t * 0.52) * 0.24,
+    MENU_CAMERA_BASE.z + Math.cos(t * 0.28) * 0.9
+  );
+  camera.lookAt(MENU_CAMERA_TARGET);
+}
+
+function enterMenu() {
+  appMode = 'menu';
+  stopCaptureSession();
+  cleanupMfers();
+  savedSpawns = [];
+  gamePhase = 'placing';
+  settled = false;
+  settledTimer = 0;
+  impactScore = 0;
+
+  if (gltfScene) {
+    if (mixer) mixer.stopAllAction();
+    scene.remove(gltfScene);
+    gltfScene = null;
+    mixer = null;
+  }
+
+  if (ghostPreview) ghostPreview.visible = false;
+  if (levelParts && levelParts.reset) levelParts.reset();
+  setLevelVisibility(false);
+  if (menuBackground) menuBackground.visible = true;
+
+  camFollow = true;
+  orbitControls.enabled = false;
+  syncFollowUi();
+  document.getElementById('cam-toggle').textContent = 'cam: ' + camZoom;
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('toggle-controls').textContent = 'settings';
+  document.getElementById('save-modal').style.display = 'none';
+  document.getElementById('instructions').textContent = '';
+  document.getElementById('score').textContent = '';
+  document.body.classList.add('menu-mode', 'menu-ready');
+  mainMenuEl.setAttribute('aria-hidden', 'false');
+  applySceneLook('menu');
+
+  physicsAccum = 0;
+  lastTime = performance.now();
+}
+
+function launchGame(gameId) {
+  if (gameId !== 'mfer-bash') return;
+
+  playClick();
+  appMode = 'game';
+  document.body.classList.remove('menu-mode');
+  mainMenuEl.setAttribute('aria-hidden', 'true');
+  if (menuBackground) menuBackground.visible = false;
+  applySceneLook('game');
+  switchLevel(0);
+  physicsAccum = 0;
+  lastTime = performance.now();
 }
 
 // Raycasting + placement preview
@@ -1102,6 +1383,7 @@ async function init() {
 
   window.addEventListener('resize', onResize);
   window.addEventListener('mousedown', (e) => {
+    if (appMode !== 'game') return;
     if (e.button !== 0 || e.shiftKey) return;
     if (e.target.closest('#hud, #controls, #toggle-controls, #cam-toggle, #cam-hint, #impact-captures')) return;
     painting = true;
@@ -1137,6 +1419,7 @@ async function init() {
   let lastPinchDist = 0;
 
   window.addEventListener('touchstart', (e) => {
+    if (appMode !== 'game') return;
     if (e.target !== renderer.domElement) return;
     e.preventDefault();
 
@@ -1159,13 +1442,13 @@ async function init() {
         const fwd = new THREE.Vector3();
         camera.getWorldDirection(fwd);
         orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
-        document.getElementById('follow-toggle').textContent = 'follow: off';
-        document.getElementById('follow-toggle').classList.remove('active');
+        syncFollowUi();
       }
     }
   }, { passive: false });
 
   window.addEventListener('touchmove', (e) => {
+    if (appMode !== 'game') return;
     if (e.target !== renderer.domElement) return;
     e.preventDefault();
 
@@ -1218,6 +1501,7 @@ async function init() {
   }, { passive: false });
 
   window.addEventListener('touchend', (e) => {
+    if (appMode !== 'game') return;
     painting = false;
     if (e.touches.length < 2) {
       touchMode = null;
@@ -1247,17 +1531,25 @@ async function init() {
   followBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     camFollow = !camFollow;
-    followBtn.textContent = 'follow: ' + (camFollow ? 'on' : 'off');
     if (camFollow) {
-      followBtn.classList.add('active');
       orbitControls.enabled = false;
     } else {
-      followBtn.classList.remove('active');
       orbitControls.enabled = true;
       const fwd = new THREE.Vector3();
       camera.getWorldDirection(fwd);
       orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
     }
+    syncFollowUi();
+  });
+  menuBtnEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    enterMenu();
+  });
+  menuGameGridEl.querySelectorAll('.game-card').forEach((card) => {
+    card.addEventListener('click', (e) => {
+      e.stopPropagation();
+      launchGame(card.dataset.game);
+    });
   });
 
   document.getElementById('go-btn').addEventListener('click', (e) => {
@@ -1482,15 +1774,17 @@ async function init() {
     }, 300);
   });
 
+  buildMenuBackground();
+
   stopLoadingScreen();
   document.getElementById('loading').style.display = 'none';
-  document.getElementById('go-btn').style.display = 'block';
-  document.getElementById('instructions').textContent = 'click to place, shift+drag to set height';
+  document.body.classList.add('menu-ready');
+  enterMenu();
   animate();
 }
 
 
-const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level, createFiringRangeLevel];
+const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level, createFiringRangeLevel, createPoolLevel, createGolfLevel];
 
 function getLevelCtx() {
   return {
@@ -1935,7 +2229,7 @@ function getShiftHeight(e) {
 }
 
 function updateGhostPreview(e) {
-  if (gamePhase !== 'placing' || !ghostPreview) return;
+  if (appMode !== 'game' || gamePhase !== 'placing' || !ghostPreview) return;
   // Hide when hovering over UI
   const el = document.elementFromPoint(e.clientX, e.clientY);
   if (el && el.closest('#hud, #controls, #toggle-controls, #cam-toggle, #impact-captures')) {
@@ -2074,7 +2368,8 @@ function activateAllMfers() {
 }
 
 function onClick(e) {
-  if (e.target.closest('#hud, #controls, #toggle-controls, #cam-toggle, #cam-hint, #impact-captures')) return;
+  if (appMode !== 'game') return;
+  if (e.target.closest('#main-menu, #hud, #controls, #toggle-controls, #cam-toggle, #cam-hint, #impact-captures')) return;
   if (paintedThisClick) { paintedThisClick = false; return; }
 
   if (gamePhase === 'placing') {
@@ -2124,6 +2419,7 @@ function onClick(e) {
 }
 
 function onGo() {
+  if (appMode !== 'game') return;
   playClick();
   if (window.gtag) gtag('event', 'go_clicked', { level: currentLevel.name, mfer_count: placedMfers.length + (gltfScene ? 1 : 0) });
   gamePhase = 'playing';
@@ -2181,13 +2477,13 @@ function cleanupMfers() {
 }
 
 function reset() {
+  if (appMode !== 'game') return;
   cleanupMfers();
   gamePhase = 'placing';
   if (!camFollow) {
     camFollow = true;
     orbitControls.enabled = false;
-    document.getElementById('follow-toggle').textContent = 'follow: on';
-    document.getElementById('follow-toggle').classList.add('active');
+    syncFollowUi();
   }
 
   // Re-create all mfers at their saved spawn positions
@@ -2252,6 +2548,7 @@ function reset() {
 }
 
 function clearAll() {
+  if (appMode !== 'game') return;
   cleanupMfers();
   savedSpawns = [];
   gamePhase = 'placing';
@@ -2344,6 +2641,12 @@ function animate() {
   const rawDelta = Math.min((now - lastTime) / 1000, 0.05);
   const delta = rawDelta * (settings.timeScale / 100);
   lastTime = now;
+
+  if (appMode === 'menu') {
+    updateMenuScene(delta, now);
+    renderer.render(scene, camera);
+    return;
+  }
 
   if (mixer && gltfScene) mixer.update(delta);
   for (const pm of placedMfers) { if (pm.mixer) pm.mixer.update(delta); }
@@ -2598,8 +2901,7 @@ function animate() {
     if (camFollow && moveKeys.some(k => keysDown.has(k))) {
       camFollow = false;
       orbitControls.enabled = true;
-      document.getElementById('follow-toggle').textContent = 'follow: off';
-      document.getElementById('follow-toggle').classList.remove('active');
+      syncFollowUi();
     }
     if (!camFollow) {
       orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
