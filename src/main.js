@@ -15,6 +15,7 @@ import createCannonball2Level from './levels/cannonball.js';
 import createFiringRangeLevel from './levels/firingRange.js';
 import createPoolLevel from './levels/pool.js';
 import createGolfLevel from './levels/golf.js';
+import createLaundromatLevel from './levels/laundromat.js';
 import { playImpact, playPop, playClick, playBoom, playHorn, playHiss, playCrush, playWreckingHit, playGunshot } from './sounds.js';
 
 const MODEL_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/builders/mfermashup.glb';
@@ -25,7 +26,7 @@ const MENU_GAMES = [
     subtitle: 'ragdoll wipeout sandbox',
     description: 'Launch mfers through trucks, stairs, wrecking balls, cannons, and more.',
     status: 'live now',
-    badge: '10 scenarios',
+    badge: '11 scenarios',
     cta: 'play now',
   },
 ];
@@ -587,6 +588,79 @@ function applyRandomAppearance(targetScene) {
   applyAppearance(targetScene, traits);
 }
 
+function createModelPropMesh(meshName) {
+  if (!originalGltf) return null;
+
+  originalGltf.scene.updateMatrixWorld(true);
+
+  let sourceMesh = null;
+  originalGltf.scene.traverse((child) => {
+    if (!sourceMesh && child.isMesh && child.name === meshName) sourceMesh = child;
+  });
+  if (!sourceMesh) return null;
+
+  let bakedGeo;
+  if (sourceMesh.isSkinnedMesh && sourceMesh.skeleton) {
+    bakedGeo = sourceMesh.geometry.clone();
+    const srcPos = sourceMesh.geometry.attributes.position;
+    const dstPos = bakedGeo.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < srcPos.count; i++) {
+      v.fromBufferAttribute(srcPos, i);
+      sourceMesh.applyBoneTransform(i, v);
+      dstPos.setXYZ(i, v.x, v.y, v.z);
+    }
+    dstPos.needsUpdate = true;
+  } else {
+    bakedGeo = sourceMesh.geometry.clone();
+    bakedGeo.applyMatrix4(sourceMesh.matrixWorld);
+  }
+
+  bakedGeo.computeBoundingBox();
+  const center = new THREE.Vector3();
+  bakedGeo.boundingBox.getCenter(center);
+  const posAttr = bakedGeo.attributes.position;
+  for (let i = 0; i < posAttr.count; i++) {
+    posAttr.setXYZ(
+      i,
+      posAttr.getX(i) - center.x,
+      posAttr.getY(i) - center.y,
+      posAttr.getZ(i) - center.z
+    );
+  }
+  posAttr.needsUpdate = true;
+  bakedGeo.computeBoundingBox();
+  bakedGeo.computeBoundingSphere();
+  bakedGeo.computeVertexNormals();
+
+  const cloneMaterial = (material) => {
+    const cloned = material.clone();
+    cloned.skinning = false;
+    return cloned;
+  };
+  const mat = Array.isArray(sourceMesh.material)
+    ? sourceMesh.material.map(cloneMaterial)
+    : cloneMaterial(sourceMesh.material);
+
+  const mesh = new THREE.Mesh(bakedGeo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+  mesh.userData.sourceMeshName = meshName;
+  return mesh;
+}
+
+function disposeMaterial(material) {
+  if (!material) return;
+  if (Array.isArray(material)) {
+    for (const mat of material) {
+      if (mat?.dispose) mat.dispose();
+    }
+    return;
+  }
+  if (material.dispose) material.dispose();
+}
+
 // Map accessory mesh names to which ragdoll segment drives their velocity when detached.
 // Returns null for meshes that should stay on the body (hair, body, eyes, mouth, shirts, beard).
 function getDetachSegment(name) {
@@ -1007,9 +1081,17 @@ const CAM_ZOOMS = ['near', 'standard', 'distant'];
 const CAM_ZOOM = { near: 1, standard: 1.5, distant: 2 };
 const keysDown = new Set();
 
+function getLevelDefaultCamFollow(level = currentLevel) {
+  return level?.defaultCamFollow ?? true;
+}
+
+function getCameraZoomForLevel(level = currentLevel, zoomKey = camZoom) {
+  return level?.cameraZooms?.[zoomKey] ?? CAM_ZOOM[zoomKey] ?? 1;
+}
+
 function applyCameraZoom() {
   const cam = currentLevel.cameraStart;
-  const zoom = CAM_ZOOM[camZoom] || 1;
+  const zoom = getCameraZoomForLevel(currentLevel, camZoom);
   const lx = cam.lookAt[0], ly = cam.lookAt[1], lz = cam.lookAt[2];
   camera.position.set(
     lx + (cam.pos[0] - lx) * zoom,
@@ -1042,6 +1124,21 @@ function syncFollowUi() {
   const followBtn = document.getElementById('follow-toggle');
   followBtn.textContent = 'follow: ' + (camFollow ? 'on' : 'off');
   followBtn.classList.toggle('active', camFollow);
+}
+
+function setCameraFollow(enabled) {
+  camFollow = enabled;
+  orbitControls.enabled = !enabled;
+  if (!enabled) {
+    const fwd = new THREE.Vector3();
+    camera.getWorldDirection(fwd);
+    orbitControls.target.set(
+      camera.position.x + fwd.x * 5,
+      camera.position.y + fwd.y * 5,
+      camera.position.z + fwd.z * 5
+    );
+  }
+  syncFollowUi();
 }
 
 function stopCaptureSession() {
@@ -1210,9 +1307,7 @@ function enterMenu() {
   setLevelVisibility(false);
   if (menuBackground) menuBackground.visible = true;
 
-  camFollow = true;
-  orbitControls.enabled = false;
-  syncFollowUi();
+  setCameraFollow(true);
   document.getElementById('cam-toggle').textContent = 'cam: ' + camZoom;
   document.getElementById('controls').style.display = 'none';
   document.getElementById('toggle-controls').textContent = 'settings';
@@ -1437,12 +1532,7 @@ async function init() {
       lastPinchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
       // Disable follow on manual camera control
       if (camFollow) {
-        camFollow = false;
-        orbitControls.enabled = true;
-        const fwd = new THREE.Vector3();
-        camera.getWorldDirection(fwd);
-        orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
-        syncFollowUi();
+        setCameraFollow(false);
       }
     }
   }, { passive: false });
@@ -1530,16 +1620,7 @@ async function init() {
   const followBtn = document.getElementById('follow-toggle');
   followBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    camFollow = !camFollow;
-    if (camFollow) {
-      orbitControls.enabled = false;
-    } else {
-      orbitControls.enabled = true;
-      const fwd = new THREE.Vector3();
-      camera.getWorldDirection(fwd);
-      orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
-    }
-    syncFollowUi();
+    setCameraFollow(!camFollow);
   });
   menuBtnEl.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1784,7 +1865,7 @@ async function init() {
 }
 
 
-const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level, createFiringRangeLevel, createPoolLevel, createGolfLevel];
+const LEVEL_FACTORIES = [createTruckHitLevel, createStairLevel, createWreckingBallLevel, createPachinkoLevel, createPressLevel, createCannonLevel, createCannonball2Level, createFiringRangeLevel, createPoolLevel, createGolfLevel, createLaundromatLevel];
 
 function getLevelCtx() {
   return {
@@ -1792,6 +1873,7 @@ function getLevelCtx() {
     get placedMfers() { return placedMfers; },
     set placedMfers(v) { placedMfers = v; },
     get mfers() { return mfers; },
+    createModelPropMesh,
     createRagdoll, captureImpactShot, detachAccessories, addDamage,
     playImpact, playBoom, playHorn, playHiss, playCrush, playWreckingHit, playGunshot,
   };
@@ -1806,12 +1888,19 @@ function cleanupLevel() {
   for (const mesh of [...levelParts.staticMeshes, ...levelParts.dynamicParts.map(d => d.mesh)]) {
     scene.remove(mesh);
     if (mesh.geometry) mesh.geometry.dispose();
-    if (mesh.material && mesh.material.dispose) mesh.material.dispose();
+    disposeMaterial(mesh.material);
   }
   for (const h of levelParts.helpers) { scene.remove(h); if (h.dispose) h.dispose(); }
   for (const obj of levelParts.animatedObjects) {
+    if (obj.cleanup) obj.cleanup();
     if (obj.body) world.removeRigidBody(obj.body);
-    if (obj.group) { scene.remove(obj.group); obj.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material && c.material.dispose) c.material.dispose(); }); }
+    if (obj.group) {
+      scene.remove(obj.group);
+      obj.group.traverse((c) => {
+        if (c.geometry) c.geometry.dispose();
+        disposeMaterial(c.material);
+      });
+    }
   }
   levelParts = null;
 }
@@ -1857,6 +1946,7 @@ function switchLevel(index) {
 
   // Camera
   applyCameraZoom();
+  setCameraFollow(getLevelDefaultCamFollow(currentLevel));
 
   // Spawn mfers
   if (originalGltf && currentLevel.autoSpawn) {
@@ -2480,11 +2570,6 @@ function reset() {
   if (appMode !== 'game') return;
   cleanupMfers();
   gamePhase = 'placing';
-  if (!camFollow) {
-    camFollow = true;
-    orbitControls.enabled = false;
-    syncFollowUi();
-  }
 
   // Re-create all mfers at their saved spawn positions
   for (const sp of savedSpawns) {
@@ -2522,11 +2607,12 @@ function reset() {
     for (const dp of levelParts.dynamicParts) {
       if (dp.initPos) {
         dp.body.setTranslation(dp.initPos, true);
-        dp.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+        dp.body.setRotation(dp.initRot || { x: 0, y: 0, z: 0, w: 1 }, true);
         dp.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         dp.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         dp.mesh.position.set(dp.initPos.x, dp.initPos.y, dp.initPos.z);
-        dp.mesh.quaternion.set(0, 0, 0, 1);
+        if (dp.initRot) dp.mesh.quaternion.set(dp.initRot.x, dp.initRot.y, dp.initRot.z, dp.initRot.w);
+        else dp.mesh.quaternion.set(0, 0, 0, 1);
       }
     }
   }
@@ -2579,11 +2665,12 @@ function clearAll() {
     for (const dp of levelParts.dynamicParts) {
       if (dp.initPos) {
         dp.body.setTranslation(dp.initPos, true);
-        dp.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+        dp.body.setRotation(dp.initRot || { x: 0, y: 0, z: 0, w: 1 }, true);
         dp.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         dp.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         dp.mesh.position.set(dp.initPos.x, dp.initPos.y, dp.initPos.z);
-        dp.mesh.quaternion.set(0, 0, 0, 1);
+        if (dp.initRot) dp.mesh.quaternion.set(dp.initRot.x, dp.initRot.y, dp.initRot.z, dp.initRot.w);
+        else dp.mesh.quaternion.set(0, 0, 0, 1);
       }
     }
     if (levelParts.reset) levelParts.reset();
@@ -2862,7 +2949,7 @@ function animate() {
         const pos = hipsBody.translation();
         const vel = hipsBody.linvel();
         const camFollow = currentLevel.cameraFollow || { offX: 3, offY: 3.5, offZ: 10, minY: 3 };
-        const zoom = CAM_ZOOM[camZoom] || 1;
+        const zoom = getCameraZoomForLevel(currentLevel, camZoom);
         const lookAheadX = vel.x * 0.15;
         const camTargetX = pos.x + camFollow.offX * zoom + lookAheadX;
         const camTargetY = Math.max(pos.y + camFollow.offY * zoom, camFollow.minY);
@@ -2899,9 +2986,7 @@ function animate() {
 
     const moveKeys = ['w','a','s','d','q','e','z','x','arrowup','arrowdown','arrowleft','arrowright'];
     if (camFollow && moveKeys.some(k => keysDown.has(k))) {
-      camFollow = false;
-      orbitControls.enabled = true;
-      syncFollowUi();
+      setCameraFollow(false);
     }
     if (!camFollow) {
       orbitControls.target.set(camera.position.x + fwd.x * 5, camera.position.y + fwd.y * 5, camera.position.z + fwd.z * 5);
