@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
 const TUNING = {
   arenaHalfX: 20,
@@ -33,6 +34,24 @@ const CAMERA_PRESETS = {
   shoulder: { pos: [-20.71, 4.53, 15.58], lookAt: [-8.41, -2.06, 4.2] },
   sideline: { pos: [24, 9.2, 0], lookAt: [-2, 1.2, 0] },
 };
+const MIXAMO_FILES = [
+  'Standing_Idle',
+  'General_Conversation',
+  'Happy_Walking_Forward_InPlace',
+  'Boxing_Taunt',
+  'Being_Terrified_While_Standing',
+  'Male_Cheering_With_Two_Fists_Pump',
+];
+const PLAYER_ANIMATION_POOL = [
+  'Standing_Idle',
+  'General_Conversation',
+];
+const ENEMY_ANIMATION_POOL = [
+  'Happy_Walking_Forward_InPlace',
+  'Boxing_Taunt',
+  'Being_Terrified_While_Standing',
+  'Male_Cheering_With_Two_Fists_Pump',
+];
 const CAMERA_CONTROLS = {
   moveSpeed: 13,
   verticalSpeed: 9,
@@ -111,6 +130,10 @@ function randomSpawnPoint() {
   return new THREE.Vector3(THREE.MathUtils.randFloatSpread(TUNING.arenaHalfX * 2), TUNING.playerPos.y, TUNING.arenaHalfZ + 1.5);
 }
 
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 export default function createHordeMode(ctx) {
   const {
     RAPIER,
@@ -168,6 +191,75 @@ export default function createHordeMode(ctx) {
   const finalEl = document.getElementById('horde-final');
   const retryBtn = document.getElementById('horde-retry-btn');
   const cameraKeysDown = new Set();
+  const mixamoClips = new Map();
+  let mixamoLoadPromise = null;
+  let mixamoLoaded = false;
+
+  function makeInPlaceClip(srcClip) {
+    const clip = srcClip.clone();
+    for (const track of clip.tracks) {
+      if (!/mixamorigHips\.position/i.test(track.name)) continue;
+      if (!track.values || track.values.length < 3) continue;
+      const baseX = track.values[0];
+      const baseZ = track.values[2];
+      for (let i = 0; i < track.values.length; i += 3) {
+        track.values[i] = baseX;
+        track.values[i + 2] = baseZ;
+      }
+    }
+    return clip;
+  }
+
+  async function loadMixamoClips() {
+    if (mixamoLoadPromise) return mixamoLoadPromise;
+
+    const loader = new FBXLoader();
+    mixamoLoadPromise = Promise.all(MIXAMO_FILES.map(async (name) => {
+      try {
+        const fbx = await loader.loadAsync(`/mixamo-sample/${name}.fbx`);
+        const srcClip = fbx.animations?.[0];
+        if (!srcClip) return;
+        const clip = makeInPlaceClip(srcClip);
+        clip.name = name;
+        mixamoClips.set(name, clip);
+      } catch (err) {
+        console.warn(`[horde] failed to load animation ${name}`, err);
+      }
+    })).then(() => {
+      mixamoLoaded = mixamoClips.size > 0;
+    });
+
+    return mixamoLoadPromise;
+  }
+
+  function playMixamoClip(actor, clipName) {
+    if (!actor?.mixer) return;
+    const clip = mixamoClips.get(clipName);
+    if (!clip) return;
+
+    actor.mixer.stopAllAction();
+    const action = actor.mixer.clipAction(clip);
+    action.reset();
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.clampWhenFinished = false;
+    action.timeScale = clipName.includes('Happy_Walking') ? 1.25 : 1;
+    action.play();
+    actor.currentClipName = clipName;
+  }
+
+  function applyLoadedAnimationsToActiveActors() {
+    if (!active || !mixamoLoaded) return;
+
+    if (player?.desiredClipName) {
+      playMixamoClip(player, player.desiredClipName);
+    }
+    for (const enemy of enemies) {
+      if (!enemy.desiredClipName) {
+        enemy.desiredClipName = pick(ENEMY_ANIMATION_POOL);
+      }
+      playMixamoClip(enemy, enemy.desiredClipName);
+    }
+  }
 
   function removeProjectile(index) {
     const projectile = projectiles[index];
@@ -182,10 +274,10 @@ export default function createHordeMode(ctx) {
     for (let i = projectiles.length - 1; i >= 0; i--) removeProjectile(i);
   }
 
-  function removeEnemy(enemy, index) {
+  function removeEnemy(enemy, index, { stopMixer = true } = {}) {
     enemyColliderHandles.delete(enemy.colliderHandle);
     if (enemy.body) world.removeRigidBody(enemy.body);
-    if (enemy.mixer) enemy.mixer.stopAllAction();
+    if (stopMixer && enemy.mixer) enemy.mixer.stopAllAction();
     enemies.splice(index, 1);
   }
 
@@ -429,6 +521,9 @@ export default function createHordeMode(ctx) {
     }, {
       y: Math.atan2(TUNING.playerFacing.x, TUNING.playerFacing.z),
     });
+    if (!player) return;
+    player.desiredClipName = pick(PLAYER_ANIMATION_POOL);
+    if (mixamoLoaded) playMixamoClip(player, player.desiredClipName);
   }
 
   function cleanupPlayer() {
@@ -447,6 +542,8 @@ export default function createHordeMode(ctx) {
 
     const speed = TUNING.enemyBaseSpeed + elapsed * TUNING.enemySpeedRamp + Math.random() * 0.7;
     enemyPm.scene.rotation.y = Math.atan2(TUNING.playerPos.x - spawnPos.x, TUNING.playerPos.z - spawnPos.z);
+    enemyPm.desiredClipName = pick(ENEMY_ANIMATION_POOL);
+    if (mixamoLoaded) playMixamoClip(enemyPm, enemyPm.desiredClipName);
 
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawnPos.x, TUNING.playerHurtY, spawnPos.z)
@@ -460,6 +557,7 @@ export default function createHordeMode(ctx) {
     enemies.push({
       scene: enemyPm.scene,
       mixer: enemyPm.mixer,
+      desiredClipName: enemyPm.desiredClipName,
       body,
       colliderHandle: collider.handle,
       pos: spawnPos,
@@ -469,7 +567,10 @@ export default function createHordeMode(ctx) {
   }
 
   function killEnemy(enemy, index, shotDir) {
-    removeEnemy(enemy, index);
+    // Keep the current animated bone pose intact when converting to ragdoll.
+    // Stopping the mixer before createRagdoll can snap briefly toward bind pose.
+    removeEnemy(enemy, index, { stopMixer: false });
+    enemy.scene.updateMatrixWorld(true);
 
     const mfer = createRagdoll(enemy.scene);
     if (mfer) {
@@ -710,6 +811,9 @@ export default function createHordeMode(ctx) {
     setupArena();
     spawnPlayer();
     resetRun();
+    loadMixamoClips()
+      .then(() => applyLoadedAnimationsToActiveActors())
+      .catch((err) => console.warn('[horde] animation preload failed', err));
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
