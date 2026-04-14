@@ -126,7 +126,7 @@ const ENEMY_MOVESETS = [
     ],
   },
 ];
-const ENEMY_PAUSE_MIN_DISTANCE = 3.4;
+const ENEMY_PAUSE_MIN_DISTANCE = 5.2;
 const ENEMY_MIXER_TIME_SCALE = 0.65;
 const MIXAMO_FILES = Array.from(
   new Set([
@@ -146,6 +146,8 @@ const HORDE_SCENE_LOOK = {
   inheritedLightScale: 0.2,
   toneExposure: 0.82,
 };
+const ENEMY_PAUSE_CHANCE_SCALE = 0.25;
+const ENEMY_PAUSE_COOLDOWN_SCALE = 1.6;
 const CAMERA_CONTROLS = {
   moveSpeed: 13,
   verticalSpeed: 9,
@@ -528,6 +530,11 @@ function randomRange(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function nextEnemyPauseCooldown(moveSet) {
+  if (!moveSet) return 2;
+  return randomRange(moveSet.pauseCheckMin, moveSet.pauseCheckMax) * ENEMY_PAUSE_COOLDOWN_SCALE;
+}
+
 function pickWeighted(items, weightKey = 'weight') {
   const total = items.reduce((sum, item) => sum + Math.max(0, item[weightKey] ?? 0), 0);
   if (total <= 0) return items[0];
@@ -598,6 +605,7 @@ export default function createHordeMode(ctx) {
 
   let active = false;
   let isGameOver = false;
+  let gameOverExplosionDone = false;
   let isSettingsOpen = false;
   let hordeCameraDebugMode = true;
   let kills = 0;
@@ -832,7 +840,7 @@ export default function createHordeMode(ctx) {
       if (nextMoveSet !== enemy.moveSet) {
         enemy.moveSet = nextMoveSet;
         enemy.speed = enemy.baseSpeed * nextMoveSet.speedMultiplier;
-        enemy.pauseCooldown = randomRange(nextMoveSet.pauseCheckMin, nextMoveSet.pauseCheckMax);
+        enemy.pauseCooldown = nextEnemyPauseCooldown(nextMoveSet);
       }
       if (enemy.state === 'pausing' && enemy.pauseClipName) {
         playEnemyPauseClip(enemy);
@@ -1232,7 +1240,7 @@ export default function createHordeMode(ctx) {
       moveSet,
       state: 'moving',
       pauseTimer: 0,
-      pauseCooldown: randomRange(moveSet.pauseCheckMin, moveSet.pauseCheckMax),
+      pauseCooldown: nextEnemyPauseCooldown(moveSet),
       pauseClipName: null,
       pauseClipTimeScale: 1,
       body,
@@ -1277,6 +1285,66 @@ export default function createHordeMode(ctx) {
 
     kills += 1;
     playImpact(10);
+    playPop();
+  }
+
+  function blastRagdoll(mfer, origin, strength = 16) {
+    if (!mfer?.ragdollBodies) return;
+    for (const body of Object.values(mfer.ragdollBodies)) {
+      const p = body.translation();
+      const dir = new THREE.Vector3(p.x - origin.x, 0.2 + Math.random() * 0.5, p.z - origin.z);
+      if (dir.lengthSq() < 0.001) {
+        dir.set(Math.random() - 0.5, 0.7, Math.random() - 0.5);
+      }
+      dir.normalize();
+      body.setLinvel({
+        x: dir.x * strength + (Math.random() - 0.5) * 3.5,
+        y: 4.5 + Math.random() * 4.5,
+        z: dir.z * strength + (Math.random() - 0.5) * 3.5,
+      }, true);
+      body.setAngvel({
+        x: (Math.random() - 0.5) * 12,
+        y: (Math.random() - 0.5) * 10,
+        z: (Math.random() - 0.5) * 12,
+      }, true);
+    }
+  }
+
+  function explodeEveryoneOnGameOver() {
+    const origin = new THREE.Vector3(TUNING.playerPos.x, TUNING.playerHurtY, TUNING.playerPos.z);
+
+    // Convert player to ragdoll and blast outward.
+    if (player?.scene) {
+      player.scene.updateMatrixWorld(true);
+      const playerRagdoll = createRagdoll(player.scene);
+      if (playerRagdoll) {
+        playerRagdoll.ragdollActive = true;
+        playerRagdoll.canDetach = false;
+        detachAccessories(playerRagdoll);
+        blastRagdoll(playerRagdoll, origin, 18);
+        ragdolls.push({ mfer: playerRagdoll, ttl: TUNING.ragdollLifetime });
+      }
+      cleanupPlayer();
+    }
+
+    // Convert all active enemies to ragdolls and blast outward.
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i];
+      removeEnemy(enemy, i, { stopMixer: false });
+      enemy.scene.updateMatrixWorld(true);
+      const enemyRagdoll = createRagdoll(enemy.scene);
+      if (!enemyRagdoll) {
+        scene.remove(enemy.scene);
+        continue;
+      }
+      enemyRagdoll.ragdollActive = true;
+      enemyRagdoll.canDetach = false;
+      detachAccessories(enemyRagdoll);
+      blastRagdoll(enemyRagdoll, origin, 15);
+      ragdolls.push({ mfer: enemyRagdoll, ttl: TUNING.ragdollLifetime });
+    }
+
+    playImpact(14);
     playPop();
   }
 
@@ -1371,7 +1439,7 @@ export default function createHordeMode(ctx) {
         if (enemy.pauseTimer <= 0) {
           enemy.state = 'moving';
           enemy.pauseClipName = null;
-          enemy.pauseCooldown = randomRange(enemy.moveSet.pauseCheckMin, enemy.moveSet.pauseCheckMax);
+          enemy.pauseCooldown = nextEnemyPauseCooldown(enemy.moveSet);
           if (mixamoLoaded) playEnemyMoveClip(enemy);
         }
       } else {
@@ -1379,17 +1447,17 @@ export default function createHordeMode(ctx) {
         if (
           enemy.pauseCooldown <= 0 &&
           dist > ENEMY_PAUSE_MIN_DISTANCE &&
-          Math.random() < enemy.moveSet.pauseChance
+          Math.random() < enemy.moveSet.pauseChance * ENEMY_PAUSE_CHANCE_SCALE
         ) {
           const pauseClipName = pickPauseClipForMoveSet(enemy.moveSet);
           if (!pauseClipName) {
-            enemy.pauseCooldown = randomRange(enemy.moveSet.pauseCheckMin, enemy.moveSet.pauseCheckMax);
+            enemy.pauseCooldown = nextEnemyPauseCooldown(enemy.moveSet);
           } else {
             enemy.state = 'pausing';
             enemy.pauseTimer = randomRange(enemy.moveSet.pauseDurationMin, enemy.moveSet.pauseDurationMax);
             enemy.pauseClipName = pauseClipName;
             enemy.pauseClipTimeScale = randomRange(0.92, 1.08);
-            enemy.pauseCooldown = randomRange(enemy.moveSet.pauseCheckMin, enemy.moveSet.pauseCheckMax);
+            enemy.pauseCooldown = nextEnemyPauseCooldown(enemy.moveSet);
             if (mixamoLoaded) playEnemyPauseClip(enemy);
             enemy.body.setNextKinematicTranslation({ x: enemy.pos.x, y: TUNING.playerHurtY, z: enemy.pos.z });
             continue;
@@ -1450,7 +1518,10 @@ export default function createHordeMode(ctx) {
   }
 
   function handleGameOver() {
-    cleanupEnemies(true);
+    if (!gameOverExplosionDone) {
+      explodeEveryoneOnGameOver();
+      gameOverExplosionDone = true;
+    }
     cleanupProjectiles();
     setGameOverUi(true);
   }
@@ -1461,6 +1532,7 @@ export default function createHordeMode(ctx) {
     cleanupRagdolls();
 
     isGameOver = false;
+    gameOverExplosionDone = false;
     kills = 0;
     elapsed = 0;
     spawnTimer = 0.85;
