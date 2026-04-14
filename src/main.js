@@ -16,6 +16,7 @@ import createFiringRangeLevel from './levels/firingRange.js';
 import createPoolLevel from './levels/pool.js';
 import createGolfLevel from './levels/golf.js';
 import createLaundromatLevel from './levels/laundromat.js';
+import createHordeMode from './modes/hordeMode.js';
 import { playImpact, playPop, playClick, playBoom, playHorn, playHiss, playCrush, playWreckingHit, playGunshot } from './sounds.js';
 
 const MODEL_URL = 'https://sfo3.digitaloceanspaces.com/cybermfers/cybermfers/builders/mfermashup.glb';
@@ -28,6 +29,15 @@ const MENU_GAMES = [
     status: 'live now',
     badge: '11 scenarios',
     cta: 'play now',
+  },
+  {
+    id: 'mfer-horde',
+    title: 'mfer horde',
+    subtitle: 'prototype survival run',
+    description: 'Hold your ground, click to shoot, and survive the mfer swarm.',
+    status: 'prototype',
+    badge: 'new mode',
+    cta: 'play prototype',
   },
 ];
 const SCENE_LOOKS = {
@@ -1062,6 +1072,7 @@ let levelParts = null;
 let currentLevelIndex = 0;
 let currentLevel = null;
 let appMode = 'menu';
+let hordeMode = null;
 let menuBackground = null;
 let menuHalo = null;
 let menuAvatars = [];
@@ -1286,6 +1297,7 @@ function updateMenuScene(delta, now) {
 }
 
 function enterMenu() {
+  if (hordeMode) hordeMode.exit();
   appMode = 'menu';
   stopCaptureSession();
   cleanupMfers();
@@ -1314,6 +1326,7 @@ function enterMenu() {
   document.getElementById('save-modal').style.display = 'none';
   document.getElementById('instructions').textContent = '';
   document.getElementById('score').textContent = '';
+  document.body.classList.remove('horde-mode');
   document.body.classList.add('menu-mode', 'menu-ready');
   mainMenuEl.setAttribute('aria-hidden', 'false');
   applySceneLook('menu');
@@ -1322,18 +1335,86 @@ function enterMenu() {
   lastTime = performance.now();
 }
 
-function launchGame(gameId) {
-  if (gameId !== 'mfer-bash') return;
+function getHordeMode() {
+  if (!hordeMode) {
+    hordeMode = createHordeMode({
+      RAPIER,
+      scene,
+      camera,
+      renderer,
+      world,
+      eventQueue,
+      spawnIdleMfer,
+      createRagdoll,
+      detachAccessories,
+      destroyRagdoll,
+      syncRagdollBones,
+      playImpact,
+      playPop,
+      playGunshot,
+    });
+  }
+  return hordeMode;
+}
 
-  playClick();
+function launchBashGame() {
+  if (hordeMode) hordeMode.exit();
   appMode = 'game';
-  document.body.classList.remove('menu-mode');
+  document.body.classList.remove('menu-mode', 'horde-mode');
   mainMenuEl.setAttribute('aria-hidden', 'true');
   if (menuBackground) menuBackground.visible = false;
   applySceneLook('game');
   switchLevel(0);
   physicsAccum = 0;
   lastTime = performance.now();
+}
+
+function launchHordeGame() {
+  if (hordeMode) hordeMode.exit();
+  stopCaptureSession();
+  cleanupMfers();
+  savedSpawns = [];
+  gamePhase = 'placing';
+  settled = false;
+  settledTimer = 0;
+  impactScore = 0;
+
+  if (gltfScene) {
+    if (mixer) mixer.stopAllAction();
+    scene.remove(gltfScene);
+    gltfScene = null;
+    mixer = null;
+  }
+
+  cleanupLevel();
+  appMode = 'horde';
+  document.body.classList.remove('menu-mode');
+  document.body.classList.add('horde-mode');
+  mainMenuEl.setAttribute('aria-hidden', 'true');
+  if (menuBackground) menuBackground.visible = false;
+  applySceneLook('game');
+  orbitControls.enabled = false;
+
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('toggle-controls').textContent = 'settings';
+  document.getElementById('save-modal').style.display = 'none';
+  document.getElementById('instructions').textContent = '';
+  document.getElementById('score').textContent = '';
+
+  getHordeMode().enter();
+  physicsAccum = 0;
+  lastTime = performance.now();
+}
+
+function launchGame(gameId) {
+  playClick();
+  if (gameId === 'mfer-bash') {
+    launchBashGame();
+    return;
+  }
+  if (gameId === 'mfer-horde') {
+    launchHordeGame();
+  }
 }
 
 // Raycasting + placement preview
@@ -1920,11 +2001,7 @@ function switchLevel(index) {
 
   // Clean up all mfers
   for (const mfer of mfers) {
-    for (const joint of mfer.ragdollJointRefs) world.removeImpulseJoint(joint, true);
-    for (const body of Object.values(mfer.ragdollBodies)) world.removeRigidBody(body);
-    for (const d of mfer.debugMeshes) { scene.remove(d.mesh); d.mesh.geometry.dispose(); d.mesh.material.dispose(); }
-    if (mfer.detachedPieces) { for (const piece of mfer.detachedPieces) { world.removeRigidBody(piece.body); scene.remove(piece.mesh); piece.geo.dispose(); } }
-    scene.remove(mfer.scene);
+    destroyRagdoll(mfer);
   }
   mfers = [];
   colliderToMfer.clear();
@@ -2211,6 +2288,31 @@ function createRagdoll(targetScene) {
 
   console.log(`Ragdoll created: ${Object.keys(mfer.ragdollBodies).length} bodies, ${mfer.ragdollJointRefs.length} joints`);
   return mfer;
+}
+
+function destroyRagdoll(mfer) {
+  if (!mfer) return;
+
+  for (const [handle, info] of colliderToMfer) {
+    if (info?.mfer === mfer) colliderToMfer.delete(handle);
+  }
+  for (const joint of mfer.ragdollJointRefs || []) world.removeImpulseJoint(joint, true);
+  for (const body of Object.values(mfer.ragdollBodies || {})) {
+    world.removeRigidBody(body);
+  }
+  for (const d of mfer.debugMeshes || []) {
+    scene.remove(d.mesh);
+    if (d.mesh.geometry) d.mesh.geometry.dispose();
+    if (d.mesh.material) d.mesh.material.dispose();
+  }
+  if (mfer.detachedPieces) {
+    for (const piece of mfer.detachedPieces) {
+      world.removeRigidBody(piece.body);
+      scene.remove(piece.mesh);
+      if (piece.geo) piece.geo.dispose();
+    }
+  }
+  if (mfer.scene) scene.remove(mfer.scene);
 }
 
 function applyLaunchVelocity(mfer) {
@@ -2547,15 +2649,7 @@ function onGo() {
 }
 
 function cleanupMfers() {
-  for (const mfer of mfers) {
-    for (const joint of mfer.ragdollJointRefs) world.removeImpulseJoint(joint, true);
-    for (const body of Object.values(mfer.ragdollBodies)) world.removeRigidBody(body);
-    for (const d of mfer.debugMeshes) { scene.remove(d.mesh); d.mesh.geometry.dispose(); d.mesh.material.dispose(); }
-    if (mfer.detachedPieces) {
-      for (const piece of mfer.detachedPieces) { world.removeRigidBody(piece.body); scene.remove(piece.mesh); piece.geo.dispose(); }
-    }
-    scene.remove(mfer.scene);
-  }
+  for (const mfer of mfers) destroyRagdoll(mfer);
   mfers = [];
   colliderToMfer.clear();
   for (const pm of placedMfers) {
@@ -2731,6 +2825,12 @@ function animate() {
 
   if (appMode === 'menu') {
     updateMenuScene(delta, now);
+    renderer.render(scene, camera);
+    return;
+  }
+
+  if (appMode === 'horde' && hordeMode && hordeMode.isActive()) {
+    hordeMode.update(rawDelta);
     renderer.render(scene, camera);
     return;
   }

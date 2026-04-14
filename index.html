@@ -31,6 +31,210 @@
       display: none !important;
     }
 
+    body.horde-mode #score,
+    body.horde-mode #ui,
+    body.horde-mode #hud,
+    body.horde-mode #controls,
+    body.horde-mode #toggle-controls,
+    body.horde-mode #follow-toggle,
+    body.horde-mode #cam-toggle,
+    body.horde-mode #cam-hint,
+    body.horde-mode #impact-captures {
+      display: none !important;
+    }
+    body.horde-mode #menu-btn {
+      right: 12px;
+    }
+    #horde-settings-btn {
+      display: none;
+      right: 72px;
+    }
+    body.horde-mode #horde-settings-btn {
+      display: block;
+    }
+    #horde-settings-panel {
+      display: none;
+      position: absolute;
+      top: 44px;
+      right: 72px;
+      z-index: 22;
+      width: min(230px, 70vw);
+      padding: 10px 11px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(8, 18, 25, 0.86);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+    }
+    #horde-settings-panel.is-open {
+      display: block;
+    }
+    #horde-settings-title {
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.74);
+      margin-bottom: 8px;
+    }
+    #horde-settings-panel label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: #fff;
+      cursor: pointer;
+    }
+    #horde-settings-panel input[type='checkbox'] {
+      accent-color: #4ecdc4;
+      cursor: pointer;
+    }
+
+    #horde-hud {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 21;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      pointer-events: none;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.65);
+    }
+    #horde-score {
+      font-family: 'SartoshiScript', monospace;
+      font-size: 34px;
+      line-height: 0.9;
+      color: #4ecdc4;
+    }
+    #horde-time {
+      font-family: monospace;
+      font-size: 14px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #fff2db;
+      opacity: 0.9;
+    }
+    body.horde-mode #horde-hud {
+      display: flex;
+    }
+    #horde-camera-debug {
+      position: absolute;
+      top: 52px;
+      right: 12px;
+      z-index: 21;
+      display: none;
+      width: min(230px, 62vw);
+      padding: 10px;
+      border-radius: 10px;
+      background: rgba(7, 16, 22, 0.76);
+      border: 1px solid rgba(255,255,255,0.14);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+    }
+    #horde-camera-debug-head {
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.72);
+      margin-bottom: 8px;
+    }
+    #horde-camera-list {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .horde-cam-btn {
+      width: 100%;
+      text-align: left;
+      padding: 6px 9px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.07);
+      color: #fff;
+      font-size: 12px;
+      font-family: monospace;
+      cursor: pointer;
+    }
+    .horde-cam-btn:active {
+      filter: brightness(1.15);
+    }
+    .horde-cam-btn.is-active {
+      border-color: #4ecdc4;
+      background: rgba(78, 205, 196, 0.2);
+      color: #d5fff9;
+    }
+    #horde-camera-help {
+      margin: 2px 0 8px;
+      font-size: 10px;
+      letter-spacing: 0.9px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.68);
+      line-height: 1.45;
+    }
+    #horde-camera-readout {
+      margin: 0;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(0,0,0,0.25);
+      color: #d9f5ef;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      user-select: text;
+    }
+
+    #horde-gameover {
+      position: absolute;
+      inset: 0;
+      z-index: 22;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(6, 13, 20, 0.58);
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+    }
+    #horde-gameover.is-visible {
+      display: flex;
+      pointer-events: auto;
+    }
+    #horde-gameover-card {
+      min-width: min(92vw, 320px);
+      padding: 22px 20px 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: linear-gradient(180deg, rgba(15, 30, 40, 0.92), rgba(12, 22, 30, 0.95));
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      text-align: center;
+      color: #fff;
+    }
+    #horde-gameover-title {
+      font-family: 'SartoshiScript', monospace;
+      font-size: 42px;
+      line-height: 0.9;
+      color: #fff4df;
+      margin-bottom: 12px;
+    }
+    #horde-final {
+      font-family: monospace;
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+      color: #fff2db;
+    }
+    #horde-retry-btn {
+      background: #4ecdc4;
+      color: #082027;
+      font-family: 'SartoshiScript', monospace;
+      font-size: 24px;
+      letter-spacing: 0.5px;
+      padding: 8px 26px;
+    }
+
     #main-menu {
       position: fixed;
       inset: 0;
@@ -418,6 +622,13 @@
       .action-btn { padding: 10px 18px; font-size: 14px; }
       #clear-btn { padding: 8px 12px; font-size: 12px; }
       #impact-captures { bottom: 100px; left: 8px; }
+      #horde-score { font-size: 28px; }
+      #horde-time { font-size: 12px; }
+      #horde-settings-btn { right: 66px; }
+      #horde-settings-panel { top: 40px; right: 66px; width: min(200px, 72vw); }
+      #horde-camera-debug { top: 74px; right: 8px; width: min(200px, 70vw); }
+      #horde-camera-readout { font-size: 10px; }
+      #horde-gameover-title { font-size: 36px; }
     }
     @media (max-width: 400px) {
       #menu-copy { max-width: 16rem; }
@@ -434,7 +645,7 @@
       <header id="menu-header">
         <div id="menu-kicker">mfer arcade</div>
         <div id="menu-title">choose a game</div>
-        <div id="menu-copy">One cabinet live. More on deck.</div>
+        <div id="menu-copy">Two cabinets live. More on deck.</div>
       </header>
       <section id="menu-games-shell">
         <div id="menu-games">
@@ -452,14 +663,45 @@
   <div id="ui">
     <div id="instructions">click to place, shift+drag to set height</div>
   </div>
+  <div id="horde-hud" aria-live="polite">
+    <div id="horde-score">kills: 0</div>
+    <div id="horde-time">time: 0.0s</div>
+  </div>
+  <div id="horde-camera-debug" aria-label="horde camera debug">
+    <div id="horde-camera-debug-head">camera debug</div>
+    <div id="horde-camera-list">
+      <button class="horde-cam-btn is-active" data-horde-cam="current" type="button">current (now)</button>
+      <button class="horde-cam-btn" data-horde-cam="diablo" type="button">diablo isometric</button>
+      <button class="horde-cam-btn" data-horde-cam="topdown" type="button">top-down</button>
+      <button class="horde-cam-btn" data-horde-cam="shoulder" type="button">behind shoulder</button>
+      <button class="horde-cam-btn" data-horde-cam="sideline" type="button">sideline wide</button>
+    </div>
+    <div id="horde-camera-help">WASD move · Q/E or ←/→ yaw · ↑/↓ pitch · Z/X up/down</div>
+    <pre id="horde-camera-readout">camera: loading...</pre>
+  </div>
+  <div id="horde-gameover" aria-live="assertive">
+    <div id="horde-gameover-card">
+      <div id="horde-gameover-title">game over</div>
+      <div id="horde-final"></div>
+      <button id="horde-retry-btn" class="action-btn" type="button">retry</button>
+    </div>
+  </div>
 
   <div id="loading">loading mfer...</div>
 
   <!-- Top-right corner -->
   <button id="menu-btn" class="corner-btn">menu</button>
+  <button id="horde-settings-btn" class="corner-btn" type="button">settings</button>
   <button id="follow-toggle" class="corner-btn active">follow: on</button>
   <button id="cam-toggle" class="corner-btn">cam: near</button>
   <button id="toggle-controls" class="corner-btn">settings</button>
+  <div id="horde-settings-panel" aria-label="horde settings">
+    <div id="horde-settings-title">horde settings</div>
+    <label for="horde-debug-toggle">
+      <span>debug mode</span>
+      <input id="horde-debug-toggle" type="checkbox" checked>
+    </label>
+  </div>
   <div id="cam-hint">WASD/arrows move, Q/E rotate, Z/X up/down<br>right-click drag to orbit, scroll to zoom</div>
 
   <!-- Settings panel -->
