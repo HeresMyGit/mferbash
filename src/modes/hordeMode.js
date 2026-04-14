@@ -120,14 +120,15 @@ function clamp(v, min, max) {
 }
 
 function randomSpawnPoint() {
-  const edge = Math.floor(Math.random() * 3);
-  if (edge === 0) {
-    return new THREE.Vector3(TUNING.arenaHalfX + 1.5, TUNING.playerPos.y, THREE.MathUtils.randFloatSpread(TUNING.arenaHalfZ * 2));
+  // Spawn only from the two sides opposite the player's corner:
+  // opposite X wall and opposite Z wall.
+  const oppositeX = TUNING.playerPos.x <= 0 ? TUNING.arenaHalfX + 1.5 : -TUNING.arenaHalfX - 1.5;
+  const oppositeZ = TUNING.playerPos.z >= 0 ? -TUNING.arenaHalfZ - 1.5 : TUNING.arenaHalfZ + 1.5;
+
+  if (Math.random() < 0.5) {
+    return new THREE.Vector3(oppositeX, TUNING.playerPos.y, THREE.MathUtils.randFloatSpread(TUNING.arenaHalfZ * 2));
   }
-  if (edge === 1) {
-    return new THREE.Vector3(THREE.MathUtils.randFloatSpread(TUNING.arenaHalfX * 2), TUNING.playerPos.y, -TUNING.arenaHalfZ - 1.5);
-  }
-  return new THREE.Vector3(THREE.MathUtils.randFloatSpread(TUNING.arenaHalfX * 2), TUNING.playerPos.y, TUNING.arenaHalfZ + 1.5);
+  return new THREE.Vector3(THREE.MathUtils.randFloatSpread(TUNING.arenaHalfX * 2), TUNING.playerPos.y, oppositeZ);
 }
 
 function pick(arr) {
@@ -176,7 +177,7 @@ export default function createHordeMode(ctx) {
   let elapsed = 0;
   let spawnTimer = 0;
   let physicsAccum = 0;
-  let selectedCameraPreset = 'current';
+  let selectedCameraPreset = 'shoulder';
 
   const hordeHudEl = document.getElementById('horde-hud');
   const cameraDebugEl = document.getElementById('horde-camera-debug');
