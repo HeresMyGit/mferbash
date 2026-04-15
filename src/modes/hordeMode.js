@@ -155,20 +155,114 @@ const CAMERA_CONTROLS = {
   pitchSpeed: 1.25,
   lookDistance: 18,
 };
+const KILLS_PER_WEAPON_SWITCH = 25;
+const ROTATING_WEAPON_IDS = ['machine_gun', 'shotgun', 'tri_shot', 'grenade_lob', 'sniper_rifle'];
+const HORDE_WEAPONS = {
+  sidearm: {
+    id: 'sidearm',
+    label: 'pistol',
+    mode: 'single',
+    allowHold: false,
+    fireInterval: 0.18,
+    speed: TUNING.bulletSpeed,
+    lifetime: TUNING.bulletLifetime,
+    radius: TUNING.bulletRadius,
+    spread: 0,
+  },
+  machine_gun: {
+    id: 'machine_gun',
+    label: 'machine gun',
+    mode: 'single',
+    allowHold: true,
+    fireInterval: 0.07,
+    speed: 46,
+    lifetime: 1.15,
+    radius: 0.12,
+    spread: 0.006,
+  },
+  shotgun: {
+    id: 'shotgun',
+    label: 'shotgun',
+    mode: 'shotgun',
+    allowHold: false,
+    fireInterval: 0.72,
+    pellets: 8,
+    spread: 0.22,
+    speed: 29,
+    lifetime: 0.72,
+    radius: 0.11,
+  },
+  tri_shot: {
+    id: 'tri_shot',
+    label: 'tri-shot',
+    mode: 'tri',
+    allowHold: false,
+    fireInterval: 0.14,
+    spread: 0.13,
+    speed: 39,
+    lifetime: 1.02,
+    radius: 0.13,
+  },
+  grenade_lob: {
+    id: 'grenade_lob',
+    label: 'grenade lob',
+    mode: 'grenade',
+    allowHold: false,
+    fireInterval: 1.08,
+    horizontalSpeed: 14,
+    flightTimeMin: 0.34,
+    flightTimeMax: 1.18,
+    gravity: 18,
+    lifetime: 1.75,
+    radius: 0.22,
+    explosionRadius: 4.2,
+    explosionStrength: 19,
+  },
+  sniper_rifle: {
+    id: 'sniper_rifle',
+    label: 'sniper rifle',
+    mode: 'single',
+    allowHold: false,
+    fireInterval: 0,
+    speed: 125,
+    lifetime: 1.1,
+    radius: 0.1,
+    spread: 0,
+    pierce: true,
+  },
+};
 
-function makeBulletMesh() {
-  const geo = new THREE.SphereGeometry(TUNING.bulletRadius, 10, 10);
+function makeBulletMesh({
+  radius = TUNING.bulletRadius,
+  color = 0xfff1c1,
+  emissive = 0xff8f4c,
+  emissiveIntensity = 1.35,
+  roughness = 0.3,
+  metalness = 0.05,
+} = {}) {
+  const geo = new THREE.SphereGeometry(radius, 10, 10);
   const mat = new THREE.MeshStandardMaterial({
-    color: 0xfff1c1,
-    emissive: 0xff8f4c,
-    emissiveIntensity: 1.35,
-    roughness: 0.3,
-    metalness: 0.05,
+    color,
+    emissive,
+    emissiveIntensity,
+    roughness,
+    metalness,
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = false;
   mesh.receiveShadow = false;
   return mesh;
+}
+
+function makeGrenadeMesh(radius = HORDE_WEAPONS.grenade_lob.radius) {
+  return makeBulletMesh({
+    radius,
+    color: 0x7d9a5b,
+    emissive: 0x233019,
+    emissiveIntensity: 0.7,
+    roughness: 0.9,
+    metalness: 0.02,
+  });
 }
 
 function createSartoshiSkyDome() {
@@ -681,6 +775,36 @@ function pickWeighted(items, weightKey = 'weight') {
   return items[items.length - 1];
 }
 
+function weaponById(id) {
+  return HORDE_WEAPONS[id] || HORDE_WEAPONS.sidearm;
+}
+
+function rotateDirection(direction, angle) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return new THREE.Vector3(
+    direction.x * cos - direction.z * sin,
+    0,
+    direction.x * sin + direction.z * cos
+  ).normalize();
+}
+
+function distanceSqPointToSegment(point, segStart, segEnd) {
+  const seg = segEnd.clone().sub(segStart);
+  const segLenSq = seg.lengthSq();
+  if (segLenSq <= 0.000001) return point.distanceToSquared(segStart);
+
+  const t = clamp(point.clone().sub(segStart).dot(seg) / segLenSq, 0, 1);
+  const closest = segStart.clone().addScaledVector(seg, t);
+  return point.distanceToSquared(closest);
+}
+
+function pickNextRotatingWeapon(currentWeaponId) {
+  const pool = ROTATING_WEAPON_IDS.filter((id) => id !== currentWeaponId);
+  const eligible = pool.length ? pool : ROTATING_WEAPON_IDS;
+  return pick(eligible);
+}
+
 function applyHordeEyeOverride(targetScene) {
   if (!targetScene) return;
 
@@ -721,6 +845,7 @@ export default function createHordeMode(ctx) {
 
   const enemies = [];
   const projectiles = [];
+  const explosionFx = [];
   const ragdolls = [];
   const enemyColliderHandles = new Set();
 
@@ -747,6 +872,13 @@ export default function createHordeMode(ctx) {
   let elapsed = 0;
   let spawnTimer = 0;
   let physicsAccum = 0;
+  let fireCooldown = 0;
+  let pointerDown = false;
+  let pointerClientX = 0;
+  let pointerClientY = 0;
+  let currentWeaponId = 'sidearm';
+  let nextWeaponSwitchAt = KILLS_PER_WEAPON_SWITCH;
+  let weaponDebugMode = false;
   let selectedCameraPreset = 'shoulder';
 
   const hordeHudEl = document.getElementById('horde-hud');
@@ -755,6 +887,9 @@ export default function createHordeMode(ctx) {
   const settingsBtnEl = document.getElementById('horde-settings-btn');
   const settingsPanelEl = document.getElementById('horde-settings-panel');
   const debugToggleEl = document.getElementById('horde-debug-toggle');
+  const weaponDebugToggleEl = document.getElementById('horde-weapon-debug-toggle');
+  const weaponDebugPanelEl = document.getElementById('horde-weapon-debug-panel');
+  const weaponDebugButtons = Array.from(document.querySelectorAll('[data-horde-weapon]'));
   const cameraPresetButtons = Array.from(document.querySelectorAll('[data-horde-cam]'));
   const scoreEl = document.getElementById('horde-score');
   const timeEl = document.getElementById('horde-time');
@@ -998,6 +1133,59 @@ export default function createHordeMode(ctx) {
     for (let i = projectiles.length - 1; i >= 0; i--) removeProjectile(i);
   }
 
+  function removeExplosionFx(index) {
+    const fx = explosionFx[index];
+    if (!fx) return;
+    scene.remove(fx.group);
+    disposeObjectTree(fx.group);
+    explosionFx.splice(index, 1);
+  }
+
+  function cleanupExplosionFx() {
+    for (let i = explosionFx.length - 1; i >= 0; i--) removeExplosionFx(i);
+  }
+
+  function spawnExplosionFx(origin, radius = 4) {
+    const group = new THREE.Group();
+
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(Math.max(0.3, radius * 0.26), 18, 12),
+      new THREE.MeshBasicMaterial({
+        color: 0xffc67a,
+        transparent: true,
+        opacity: 0.62,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    flash.position.set(origin.x, TUNING.groundY + 0.36, origin.z);
+    group.add(flash);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(Math.max(0.2, radius * 0.24), Math.max(0.35, radius * 0.48), 36),
+      new THREE.MeshBasicMaterial({
+        color: 0xff8a42,
+        transparent: true,
+        opacity: 0.8,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(origin.x, TUNING.groundY + 0.06, origin.z);
+    group.add(ring);
+
+    scene.add(group);
+    explosionFx.push({
+      group,
+      flash,
+      ring,
+      ttl: 0.28,
+      duration: 0.28,
+    });
+  }
+
   function removeEnemy(enemy, index, { stopMixer = true } = {}) {
     enemyColliderHandles.delete(enemy.colliderHandle);
     if (enemy.body) world.removeRigidBody(enemy.body);
@@ -1061,10 +1249,89 @@ export default function createHordeMode(ctx) {
     }
   }
 
+  function updateExplosionFx(delta) {
+    for (let i = explosionFx.length - 1; i >= 0; i--) {
+      const fx = explosionFx[i];
+      fx.ttl -= delta;
+      const age = 1 - clamp(fx.ttl / fx.duration, 0, 1);
+
+      const flashScale = 1 + age * 2.1;
+      fx.flash.scale.setScalar(flashScale);
+      fx.flash.material.opacity = (1 - age) * 0.62;
+
+      const ringScale = 1 + age * 1.8;
+      fx.ring.scale.setScalar(ringScale);
+      fx.ring.material.opacity = (1 - age) * 0.82;
+
+      if (fx.ttl <= 0) removeExplosionFx(i);
+    }
+  }
+
   function setHud() {
     if (!scoreEl || !timeEl) return;
+    const weapon = weaponById(currentWeaponId);
     scoreEl.textContent = `kills: ${kills}`;
-    timeEl.textContent = `time: ${elapsed.toFixed(1)}s`;
+    timeEl.textContent = `time: ${elapsed.toFixed(1)}s · ${weapon.label}`;
+  }
+
+  function syncWeaponDebugUi() {
+    if (weaponDebugToggleEl && weaponDebugToggleEl.checked !== weaponDebugMode) {
+      weaponDebugToggleEl.checked = weaponDebugMode;
+    }
+    if (weaponDebugPanelEl) {
+      weaponDebugPanelEl.classList.toggle('is-open', weaponDebugMode);
+    }
+    for (const btn of weaponDebugButtons) {
+      btn.classList.toggle('is-active', btn.dataset.hordeWeapon === currentWeaponId);
+    }
+  }
+
+  function setWeapon(weaponId, { playFx = true } = {}) {
+    const nextWeapon = weaponById(weaponId);
+    if (nextWeapon.id === currentWeaponId) {
+      syncWeaponDebugUi();
+      return;
+    }
+    currentWeaponId = nextWeapon.id;
+    fireCooldown = 0;
+    pointerDown = false;
+    syncWeaponDebugUi();
+    setHud();
+    if (playFx) {
+      playImpact(9.5);
+      playPop();
+    }
+  }
+
+  function setWeaponDebugMode(enabled) {
+    weaponDebugMode = !!enabled;
+    if (!weaponDebugMode) {
+      if (kills < KILLS_PER_WEAPON_SWITCH) {
+        setWeapon('sidearm', { playFx: false });
+      } else if (currentWeaponId === 'sidearm') {
+        setWeapon(pickNextRotatingWeapon('sidearm'), { playFx: false });
+      }
+      nextWeaponSwitchAt = (Math.floor(kills / KILLS_PER_WEAPON_SWITCH) + 1) * KILLS_PER_WEAPON_SWITCH;
+      maybeRotateWeaponByKills();
+    }
+    syncWeaponDebugUi();
+    setHud();
+  }
+
+  function maybeRotateWeaponByKills() {
+    if (weaponDebugMode) return;
+    let switched = false;
+    while (kills >= nextWeaponSwitchAt) {
+      setWeapon(pickNextRotatingWeapon(currentWeaponId), { playFx: false });
+      nextWeaponSwitchAt += KILLS_PER_WEAPON_SWITCH;
+      switched = true;
+    }
+    if (switched) {
+      fireCooldown = 0;
+      pointerDown = false;
+      playImpact(11);
+      playPop();
+    }
   }
 
   function setGameOverUi(visible) {
@@ -1387,7 +1654,7 @@ export default function createHordeMode(ctx) {
     enemyColliderHandles.add(collider.handle);
   }
 
-  function killEnemy(enemy, index, shotDir) {
+  function killEnemy(enemy, index, shotDir, { silent = false } = {}) {
     // Keep the current animated bone pose intact when converting to ragdoll.
     // Stopping the mixer before createRagdoll can snap briefly toward bind pose.
     removeEnemy(enemy, index, { stopMixer: false });
@@ -1419,8 +1686,11 @@ export default function createHordeMode(ctx) {
     }
 
     kills += 1;
-    playImpact(10);
-    playPop();
+    maybeRotateWeaponByKills();
+    if (!silent) {
+      playImpact(10);
+      playPop();
+    }
   }
 
   function blastRagdoll(mfer, origin, strength = 16) {
@@ -1483,75 +1753,246 @@ export default function createHordeMode(ctx) {
     playPop();
   }
 
-  function shootAt(clientX, clientY) {
-    if (!active || isGameOver) return;
-    if (!player) return;
+  function spawnProjectile({
+    pos,
+    velocity,
+    ttl,
+    radius,
+    pierce = false,
+    gravity = 0,
+    type = 'bullet',
+    explosionRadius = 0,
+    explosionStrength = 0,
+  }) {
+    if (projectiles.length >= TUNING.bulletMax) removeProjectile(0);
 
+    const mesh = type === 'grenade'
+      ? makeGrenadeMesh(radius)
+      : makeBulletMesh({ radius });
+    mesh.position.copy(pos);
+    scene.add(mesh);
+
+    projectiles.push({
+      type,
+      mesh,
+      pos: pos.clone(),
+      vel: velocity.clone(),
+      ttl,
+      radius,
+      pierce,
+      gravity,
+      explosionRadius,
+      explosionStrength,
+    });
+  }
+
+  function explodeAt(origin, radius = 4, strength = 18) {
+    const radiusSq = radius * radius;
+    let hits = 0;
+    spawnExplosionFx(origin, radius);
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i];
+      const dx = enemy.pos.x - origin.x;
+      const dz = enemy.pos.z - origin.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq > radiusSq) continue;
+
+      const shotDir = new THREE.Vector3(dx, 0.2, dz);
+      if (shotDir.lengthSq() < 0.0001) {
+        shotDir.set(Math.random() - 0.5, 0.3, Math.random() - 0.5);
+      }
+      shotDir.normalize();
+
+      killEnemy(enemy, i, shotDir, { silent: true });
+      hits += 1;
+    }
+
+    for (const ragdoll of ragdolls) {
+      const hipsBody = ragdoll.mfer?.ragdollBodies?.Hips;
+      if (!hipsBody) continue;
+      const p = hipsBody.translation();
+      const dx = p.x - origin.x;
+      const dz = p.z - origin.z;
+      if ((dx * dx + dz * dz) > radiusSq * 1.4) continue;
+      blastRagdoll(ragdoll.mfer, origin, strength * 0.9);
+    }
+
+    playImpact(Math.min(18, 12 + hits * 0.4));
+    playPop();
+  }
+
+  function detonateProjectile(projectile, index) {
+    explodeAt(projectile.pos, projectile.explosionRadius || 4, projectile.explosionStrength || 18);
+    removeProjectile(index);
+  }
+
+  function getAimData(clientX, clientY) {
     const bounds = renderer.domElement.getBoundingClientRect();
     pointer.x = ((clientX - bounds.left) / bounds.width) * 2 - 1;
     pointer.y = -((clientY - bounds.top) / bounds.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
 
     const hitPoint = new THREE.Vector3();
-    if (!raycaster.ray.intersectPlane(groundPlane, hitPoint)) return;
+    if (!raycaster.ray.intersectPlane(groundPlane, hitPoint)) return null;
 
     const muzzle = TUNING.playerPos.clone().add(TUNING.muzzleOffset);
-    const direction = hitPoint.sub(muzzle);
+    const direction = hitPoint.clone().sub(muzzle);
     direction.y = 0;
-    if (direction.lengthSq() < 0.0001) return;
+    if (direction.lengthSq() < 0.0001) return null;
     direction.normalize();
 
-    if (projectiles.length >= TUNING.bulletMax) removeProjectile(0);
+    return { muzzle, direction, hitPoint };
+  }
 
-    const bulletMesh = makeBulletMesh();
-    bulletMesh.position.copy(muzzle);
-    scene.add(bulletMesh);
+  function shootAt(clientX, clientY, { isAuto = false } = {}) {
+    if (!active || isGameOver || !player) return false;
 
-    projectiles.push({
-      mesh: bulletMesh,
-      pos: muzzle,
-      dir: direction,
-      ttl: TUNING.bulletLifetime,
-    });
+    const weapon = weaponById(currentWeaponId);
+    if (isAuto && !weapon.allowHold) return false;
+    if (fireCooldown > 0) return false;
 
+    const aim = getAimData(clientX, clientY);
+    if (!aim) return false;
+
+    const { muzzle, direction, hitPoint } = aim;
     if (player.scene) {
       player.scene.rotation.y = Math.atan2(direction.x, direction.z);
     }
 
-    playGunshot();
+    if (weapon.mode === 'single') {
+      const shotDir = weapon.spread
+        ? rotateDirection(direction, THREE.MathUtils.randFloatSpread(weapon.spread))
+        : direction.clone();
+      spawnProjectile({
+        pos: muzzle,
+        velocity: shotDir.multiplyScalar(weapon.speed),
+        ttl: weapon.lifetime,
+        radius: weapon.radius,
+        pierce: !!weapon.pierce,
+      });
+      playGunshot();
+    } else if (weapon.mode === 'shotgun') {
+      for (let i = 0; i < weapon.pellets; i++) {
+        const spreadYaw = THREE.MathUtils.randFloatSpread(weapon.spread);
+        const shotDir = rotateDirection(direction, spreadYaw);
+        const speed = weapon.speed * THREE.MathUtils.randFloat(0.84, 1.16);
+        spawnProjectile({
+          pos: muzzle,
+          velocity: shotDir.multiplyScalar(speed),
+          ttl: weapon.lifetime * THREE.MathUtils.randFloat(0.82, 1.08),
+          radius: weapon.radius,
+        });
+      }
+      playGunshot();
+    } else if (weapon.mode === 'tri') {
+      const angles = [-weapon.spread, 0, weapon.spread];
+      for (const angle of angles) {
+        const shotDir = rotateDirection(direction, angle);
+        spawnProjectile({
+          pos: muzzle,
+          velocity: shotDir.multiplyScalar(weapon.speed),
+          ttl: weapon.lifetime,
+          radius: weapon.radius,
+        });
+      }
+      playGunshot();
+    } else if (weapon.mode === 'grenade') {
+      const launchPos = muzzle.clone().add(new THREE.Vector3(0, 0.05, 0));
+      const targetPos = hitPoint.clone();
+      targetPos.y = TUNING.groundY + weapon.radius * 0.6;
+      const deltaToTarget = targetPos.clone().sub(launchPos);
+      const horizontalDistance = Math.hypot(deltaToTarget.x, deltaToTarget.z);
+      const flightTime = clamp(
+        horizontalDistance / weapon.horizontalSpeed,
+        weapon.flightTimeMin,
+        weapon.flightTimeMax
+      );
+      const launchVelocity = new THREE.Vector3(
+        deltaToTarget.x / flightTime,
+        (deltaToTarget.y + 0.5 * weapon.gravity * flightTime * flightTime) / flightTime,
+        deltaToTarget.z / flightTime
+      );
+      spawnProjectile({
+        pos: launchPos,
+        velocity: launchVelocity,
+        ttl: Math.min(weapon.lifetime, flightTime + 0.12),
+        radius: weapon.radius,
+        gravity: weapon.gravity,
+        type: 'grenade',
+        explosionRadius: weapon.explosionRadius,
+        explosionStrength: weapon.explosionStrength,
+      });
+      playImpact(9);
+    }
+
+    fireCooldown = weapon.fireInterval;
+    return true;
+  }
+
+  function updateWeaponFiring(delta) {
+    fireCooldown = Math.max(0, fireCooldown - delta);
+    const weapon = weaponById(currentWeaponId);
+    if (!pointerDown || !weapon.allowHold || isGameOver) return;
+    while (fireCooldown <= 0) {
+      if (!shootAt(pointerClientX, pointerClientY, { isAuto: true })) break;
+    }
   }
 
   function updateProjectiles(delta) {
-    const hitRadiusSq = (TUNING.enemyRadius + TUNING.bulletRadius) * (TUNING.enemyRadius + TUNING.bulletRadius);
-
     for (let i = projectiles.length - 1; i >= 0; i--) {
-      const bullet = projectiles[i];
-      bullet.ttl -= delta;
-      bullet.pos.addScaledVector(bullet.dir, TUNING.bulletSpeed * delta);
-      bullet.mesh.position.copy(bullet.pos);
+      const projectile = projectiles[i];
+      const prevPos = projectile.pos.clone();
+      projectile.ttl -= delta;
+      if (projectile.gravity > 0) {
+        projectile.vel.y -= projectile.gravity * delta;
+      }
+      projectile.pos.addScaledVector(projectile.vel, delta);
+      projectile.mesh.position.copy(projectile.pos);
 
       const oob =
-        bullet.pos.x < -TUNING.arenaHalfX - 3 || bullet.pos.x > TUNING.arenaHalfX + 3 ||
-        bullet.pos.z < -TUNING.arenaHalfZ - 3 || bullet.pos.z > TUNING.arenaHalfZ + 3;
+        projectile.pos.x < -TUNING.arenaHalfX - 3 || projectile.pos.x > TUNING.arenaHalfX + 3 ||
+        projectile.pos.z < -TUNING.arenaHalfZ - 3 || projectile.pos.z > TUNING.arenaHalfZ + 3 ||
+        projectile.pos.y < TUNING.groundY - 1.4 || projectile.pos.y > TUNING.groundY + 22;
 
-      if (bullet.ttl <= 0 || oob) {
+      if (oob) {
         removeProjectile(i);
         continue;
       }
 
-      let hit = false;
-      for (let j = enemies.length - 1; j >= 0; j--) {
-        const enemy = enemies[j];
-        const dx = enemy.pos.x - bullet.pos.x;
-        const dz = enemy.pos.z - bullet.pos.z;
-        if ((dx * dx + dz * dz) > hitRadiusSq) continue;
-
-        killEnemy(enemy, j, bullet.dir);
-        hit = true;
-        break;
+      if (projectile.type === 'grenade' && projectile.pos.y <= TUNING.groundY + projectile.radius * 0.7) {
+        detonateProjectile(projectile, i);
+        continue;
       }
 
-      if (hit) removeProjectile(i);
+      // Regular bullets should travel until they hit something or leave the arena.
+      // Keep TTL only for grenade safety detonation behavior.
+      if (projectile.type === 'grenade' && projectile.ttl <= 0) {
+        detonateProjectile(projectile, i);
+        continue;
+      }
+
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        const hitRadius = TUNING.enemyRadius + projectile.radius;
+        const enemyPoint = new THREE.Vector3(enemy.pos.x, TUNING.playerHurtY, enemy.pos.z);
+        const distSq = distanceSqPointToSegment(enemyPoint, prevPos, projectile.pos);
+        if (distSq > hitRadius * hitRadius) continue;
+
+        if (projectile.type === 'grenade') {
+          detonateProjectile(projectile, i);
+          break;
+        } else {
+          const shotDir = projectile.vel.lengthSq() > 0.0001
+            ? projectile.vel.clone().setY(0).normalize()
+            : new THREE.Vector3(0, 0, -1);
+          killEnemy(enemy, j, shotDir);
+          if (!projectile.pierce) {
+            removeProjectile(i);
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -1657,6 +2098,7 @@ export default function createHordeMode(ctx) {
       explodeEveryoneOnGameOver();
       gameOverExplosionDone = true;
     }
+    pointerDown = false;
     cleanupProjectiles();
     setGameOverUi(true);
   }
@@ -1664,7 +2106,9 @@ export default function createHordeMode(ctx) {
   function resetRun() {
     cleanupEnemies(true);
     cleanupProjectiles();
+    cleanupExplosionFx();
     cleanupRagdolls();
+    const debugWeapon = currentWeaponId;
 
     isGameOver = false;
     gameOverExplosionDone = false;
@@ -1672,8 +2116,13 @@ export default function createHordeMode(ctx) {
     elapsed = 0;
     spawnTimer = 0.85;
     physicsAccum = 0;
+    fireCooldown = 0;
+    pointerDown = false;
+    currentWeaponId = weaponDebugMode ? debugWeapon : 'sidearm';
+    nextWeaponSwitchAt = KILLS_PER_WEAPON_SWITCH;
 
     setGameOverUi(false);
+    syncWeaponDebugUi();
     setHud();
   }
 
@@ -1681,7 +2130,35 @@ export default function createHordeMode(ctx) {
     if (!active) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
-    shootAt(e.clientX, e.clientY);
+    pointerDown = true;
+    pointerClientX = e.clientX;
+    pointerClientY = e.clientY;
+    if (e.pointerId != null) {
+      try {
+        renderer.domElement.setPointerCapture(e.pointerId);
+      } catch (err) {
+        // Ignore capture errors (for example if pointer left before capture).
+      }
+    }
+    shootAt(pointerClientX, pointerClientY);
+  }
+
+  function onPointerMove(e) {
+    if (!active) return;
+    pointerClientX = e.clientX;
+    pointerClientY = e.clientY;
+  }
+
+  function onPointerUp(e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pointerDown = false;
+    if (e.pointerId != null) {
+      try {
+        renderer.domElement.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        // No-op.
+      }
+    }
   }
 
   function onRetry(e) {
@@ -1713,6 +2190,19 @@ export default function createHordeMode(ctx) {
     setDebugMode(e.currentTarget.checked);
   }
 
+  function onWeaponDebugToggleChange(e) {
+    if (!active) return;
+    setWeaponDebugMode(e.currentTarget.checked);
+  }
+
+  function onWeaponDebugButtonClick(e) {
+    if (!active || !weaponDebugMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const weaponId = e.currentTarget.dataset.hordeWeapon;
+    setWeapon(weaponId);
+  }
+
   function onWindowPointerDown(e) {
     if (!active || !isSettingsOpen) return;
     if (settingsPanelEl?.contains(e.target) || settingsBtnEl?.contains(e.target)) return;
@@ -1737,16 +2227,25 @@ export default function createHordeMode(ctx) {
       .catch((err) => console.warn('[horde] animation preload failed', err));
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('keydown', onCameraKeyDown);
     window.addEventListener('keyup', onCameraKeyUp);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     window.addEventListener('pointerdown', onWindowPointerDown);
     if (settingsBtnEl) settingsBtnEl.addEventListener('click', onSettingsButtonClick);
     if (debugToggleEl) {
       debugToggleEl.checked = hordeCameraDebugMode;
       debugToggleEl.addEventListener('change', onDebugToggleChange);
     }
+    if (weaponDebugToggleEl) {
+      weaponDebugToggleEl.checked = weaponDebugMode;
+      weaponDebugToggleEl.addEventListener('change', onWeaponDebugToggleChange);
+    }
     for (const btn of cameraPresetButtons) btn.addEventListener('click', onCameraPresetClick);
+    for (const btn of weaponDebugButtons) btn.addEventListener('click', onWeaponDebugButtonClick);
+    syncWeaponDebugUi();
     if (retryBtn) retryBtn.addEventListener('click', onRetry);
     if (hordeCameraDebugMode) updateCameraReadout();
   }
@@ -1754,19 +2253,26 @@ export default function createHordeMode(ctx) {
   function exit() {
     if (!active) return;
     active = false;
+    pointerDown = false;
 
     renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+    renderer.domElement.removeEventListener('pointermove', onPointerMove);
     renderer.domElement.removeEventListener('contextmenu', onContextMenu);
     window.removeEventListener('keydown', onCameraKeyDown);
     window.removeEventListener('keyup', onCameraKeyUp);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
     window.removeEventListener('pointerdown', onWindowPointerDown);
     if (settingsBtnEl) settingsBtnEl.removeEventListener('click', onSettingsButtonClick);
     if (debugToggleEl) debugToggleEl.removeEventListener('change', onDebugToggleChange);
+    if (weaponDebugToggleEl) weaponDebugToggleEl.removeEventListener('change', onWeaponDebugToggleChange);
     for (const btn of cameraPresetButtons) btn.removeEventListener('click', onCameraPresetClick);
+    for (const btn of weaponDebugButtons) btn.removeEventListener('click', onWeaponDebugButtonClick);
     if (retryBtn) retryBtn.removeEventListener('click', onRetry);
     cameraKeysDown.clear();
 
     cleanupProjectiles();
+    cleanupExplosionFx();
     cleanupEnemies(true);
     cleanupRagdolls();
     cleanupPlayer();
@@ -1789,7 +2295,9 @@ export default function createHordeMode(ctx) {
 
     updateSpawning(dt);
     updateEnemies(dt);
+    updateWeaponFiring(dt);
     updateProjectiles(dt);
+    updateExplosionFx(dt);
 
     const physicsDt = 1 / 60;
     physicsAccum += dt;

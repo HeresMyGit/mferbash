@@ -89,6 +89,36 @@
       accent-color: #4ecdc4;
       cursor: pointer;
     }
+    #horde-weapon-debug-panel {
+      margin-top: 8px;
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    #horde-weapon-debug-panel.is-open {
+      display: grid;
+    }
+    .horde-weapon-btn {
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-family: monospace;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    .horde-weapon-btn:active {
+      background: rgba(255,255,255,0.2);
+    }
+    .horde-weapon-btn.is-active {
+      background: rgba(78, 205, 196, 0.28);
+      border-color: rgba(78, 205, 196, 0.78);
+      color: #e8fffd;
+    }
 
     #horde-hud {
       position: absolute;
@@ -723,6 +753,18 @@
       <span>debug mode</span>
       <input id="horde-debug-toggle" type="checkbox" checked>
     </label>
+    <label for="horde-weapon-debug-toggle" style="margin-top:8px;">
+      <span>weapon debug</span>
+      <input id="horde-weapon-debug-toggle" type="checkbox">
+    </label>
+    <div id="horde-weapon-debug-panel" aria-label="weapon debug choices">
+      <button class="horde-weapon-btn is-active" data-horde-weapon="sidearm" type="button">pistol</button>
+      <button class="horde-weapon-btn" data-horde-weapon="machine_gun" type="button">machine</button>
+      <button class="horde-weapon-btn" data-horde-weapon="shotgun" type="button">shotgun</button>
+      <button class="horde-weapon-btn" data-horde-weapon="tri_shot" type="button">tri-shot</button>
+      <button class="horde-weapon-btn" data-horde-weapon="grenade_lob" type="button">grenade</button>
+      <button class="horde-weapon-btn" data-horde-weapon="sniper_rifle" type="button">sniper</button>
+    </div>
   </div>
   <div id="cam-hint">WASD/arrows move, Q/E rotate, Z/X up/down<br>right-click drag to orbit, scroll to zoom</div>
 
