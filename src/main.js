@@ -1919,7 +1919,7 @@ async function init() {
     e.stopPropagation();
     mferIdMode = !mferIdMode;
     mferModeBtn.textContent = mferIdMode ? 'id #' : 'random';
-    mferIdInput.style.display = mferIdMode ? '' : 'none';
+    mferIdInput.style.display = mferIdMode ? 'block' : 'none';
     if (!mferIdMode) mferIdValue = null;
   });
   mferIdInput.addEventListener('click', (e) => e.stopPropagation());

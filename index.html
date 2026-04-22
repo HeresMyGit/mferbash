@@ -13,6 +13,18 @@
     gtag('config', 'G-Y13VR5RYEP');
   </script>
   <style>
+    :root {
+      --ink-cream: #fff7e8;
+      --ink-gold: #f5b548;
+      --ink-teal: #4ecdc4;
+      --ink-red: #e94560;
+      --ink-panel: linear-gradient(180deg, rgba(28, 38, 47, 0.96), rgba(13, 20, 27, 0.96));
+      --ink-panel-active: linear-gradient(180deg, rgba(109, 24, 40, 0.96), rgba(68, 12, 24, 0.98));
+      --ink-panel-teal: linear-gradient(180deg, rgba(20, 77, 76, 0.96), rgba(8, 42, 44, 0.98));
+      --ink-outline: rgba(255,255,255,0.16);
+      --ink-shadow: 0 12px 28px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -10px 18px rgba(0,0,0,0.24);
+      --btn-text-shadow: 0 1px 0 rgba(0,0,0,0.42), 0 2px 10px rgba(0,0,0,0.28);
+    }
     @font-face {
       font-family: 'SartoshiScript';
       src: url('/fonts/SartoshiScript-Regular.otf') format('opentype');
@@ -20,6 +32,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; background: #0a0f14; font-family: monospace; color: #fff; }
     canvas { display: block; }
+    button { -webkit-tap-highlight-color: transparent; }
 
     body.menu-mode #score,
     body.menu-mode #ui,
@@ -60,11 +73,11 @@
       z-index: 22;
       width: min(230px, 70vw);
       padding: 10px 11px;
-      border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(8, 18, 25, 0.86);
+      border-radius: 16px 18px 15px 20px / 17px 15px 19px 16px;
+      border: 1px solid var(--ink-outline);
+      background: linear-gradient(180deg, rgba(11, 21, 28, 0.94), rgba(6, 12, 18, 0.92));
       backdrop-filter: blur(8px);
-      box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.34);
     }
     #horde-settings-panel.is-open {
       display: block;
@@ -99,24 +112,25 @@
       display: grid;
     }
     .horde-weapon-btn {
-      background: rgba(255,255,255,0.08);
-      color: #fff;
-      border: 1px solid rgba(255,255,255,0.16);
-      border-radius: 6px;
+      background: url('/ui/button-bg/rect-dark.png') center / 100% 100% no-repeat;
+      color: var(--ink-cream);
+      border: 0;
+      border-radius: 0;
       padding: 6px 8px;
       font-family: monospace;
       font-size: 10px;
       letter-spacing: 0.5px;
       text-transform: uppercase;
       cursor: pointer;
-      transition: background 120ms ease, border-color 120ms ease;
+      text-shadow: var(--btn-text-shadow);
+      transition: transform 140ms ease, filter 140ms ease;
     }
     .horde-weapon-btn:active {
-      background: rgba(255,255,255,0.2);
+      transform: translateY(1px) scale(0.985);
+      filter: brightness(0.94);
     }
     .horde-weapon-btn.is-active {
-      background: rgba(78, 205, 196, 0.28);
-      border-color: rgba(78, 205, 196, 0.78);
+      background-image: url('/ui/button-bg/rect-teal.png');
       color: #e8fffd;
     }
 
@@ -156,8 +170,8 @@
       display: none;
       width: min(230px, 62vw);
       padding: 10px;
-      border-radius: 10px;
-      background: rgba(7, 16, 22, 0.76);
+      border-radius: 16px 18px 14px 19px / 18px 15px 18px 16px;
+      background: linear-gradient(180deg, rgba(8, 16, 22, 0.9), rgba(6, 11, 16, 0.86));
       border: 1px solid rgba(255,255,255,0.14);
       backdrop-filter: blur(6px);
       box-shadow: 0 8px 30px rgba(0,0,0,0.35);
@@ -178,20 +192,22 @@
       width: 100%;
       text-align: left;
       padding: 6px 9px;
-      border-radius: 6px;
-      border: 1px solid rgba(255,255,255,0.16);
-      background: rgba(255,255,255,0.07);
-      color: #fff;
+      border: 0;
+      border-radius: 0;
+      background: url('/ui/button-bg/wide-dark.png') center / 100% 100% no-repeat;
+      color: var(--ink-cream);
       font-size: 12px;
       font-family: monospace;
       cursor: pointer;
+      text-shadow: var(--btn-text-shadow);
+      transition: transform 140ms ease, filter 140ms ease;
     }
     .horde-cam-btn:active {
-      filter: brightness(1.15);
+      transform: translateY(1px) scale(0.985);
+      filter: brightness(0.94);
     }
     .horde-cam-btn.is-active {
-      border-color: #4ecdc4;
-      background: rgba(78, 205, 196, 0.2);
+      background-image: url('/ui/button-bg/wide-teal.png');
       color: #d5fff9;
     }
     #horde-camera-help {
@@ -234,7 +250,7 @@
     #horde-gameover-card {
       min-width: min(92vw, 320px);
       padding: 22px 20px 18px;
-      border-radius: 16px;
+      border-radius: 22px 20px 18px 24px / 18px 22px 19px 21px;
       border: 1px solid rgba(255,255,255,0.15);
       background: linear-gradient(180deg, rgba(15, 30, 40, 0.92), rgba(12, 22, 30, 0.95));
       box-shadow: 0 20px 60px rgba(0,0,0,0.4);
@@ -257,12 +273,14 @@
       color: #fff2db;
     }
     #horde-retry-btn {
-      background: #4ecdc4;
-      color: #082027;
+      background: url('/ui/button-bg/rect-teal.png') center / 100% 100% no-repeat;
+      color: #f6fffd;
       font-family: 'SartoshiScript', monospace;
       font-size: 24px;
       letter-spacing: 0.5px;
       padding: 8px 26px;
+      text-transform: none;
+      text-shadow: var(--btn-text-shadow);
     }
 
     #main-menu {
@@ -506,17 +524,23 @@
       justify-content: center;
       gap: 10px;
       padding: 12px 17px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.1);
-      border: 1px solid rgba(255,255,255,0.08);
-      font-size: 12px;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      font-weight: bold;
+      min-width: 124px;
+      background: url('/ui/button-bg/pill-dark.png') center / 100% 100% no-repeat;
+      border: 0;
+      font-family: 'SartoshiScript', monospace;
+      font-size: 22px;
+      line-height: 1;
+      color: #fff6e7;
+      text-transform: none;
+      letter-spacing: 0.4px;
+      text-shadow: var(--btn-text-shadow);
+      pointer-events: none;
     }
-    .game-card-cta::after {
-      content: '>';
-      font-size: 14px;
+    .game-card[data-game="mfer-bash"] .game-card-cta {
+      background-image: url('/ui/button-bg/pill-teal.png');
+    }
+    .game-card[data-game="mfer-horde"] .game-card-cta {
+      background-image: url('/ui/button-bg/pill-red.png');
     }
 
     /* Top overlay — title, instructions, score */
@@ -544,16 +568,49 @@
       text-align: center;
     }
 
+    .game-card:hover .game-card-cta,
+    .game-card:focus-visible .game-card-cta {
+      transform: translateY(-2px) rotate(-0.4deg) scale(1.02);
+      filter: brightness(1.04) saturate(1.04);
+      outline: none;
+    }
+    .game-card:active .game-card-cta {
+      transform: translateY(1px) scale(0.985);
+      filter: brightness(0.94);
+    }
+
     /* Top-right corner buttons */
     .corner-btn {
       position: absolute; top: 12px; z-index: 11;
-      background: rgba(0,0,0,0.5); color: #fff;
-      border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
-      padding: 6px 10px; font-family: monospace; font-size: 12px; cursor: pointer;
+      background: url('/ui/button-bg/pill-dark.png') center / 100% 100% no-repeat;
+      color: var(--ink-cream);
+      border: 0;
+      border-radius: 0;
+      padding: 6px 10px; font-family: monospace; font-size: 12px;
+      text-shadow: var(--btn-text-shadow);
+      cursor: pointer;
+      transition: transform 140ms ease, filter 140ms ease;
     }
-    .corner-btn:active { background: rgba(255,255,255,0.15); }
-    .corner-btn.active { background: #e94560; border-color: #e94560; }
-    #menu-btn { right: 292px; }
+    .corner-btn:hover,
+    .action-btn:hover,
+    .level-btn:hover,
+    #defaults-btn:hover,
+    #mfer-mode-btn:hover,
+    .modal-btn:hover {
+      transform: translateY(-1px) rotate(-0.15deg);
+      filter: brightness(1.04);
+    }
+    .corner-btn:active,
+    .action-btn:active,
+    .level-btn:active,
+    #defaults-btn:active,
+    #mfer-mode-btn:active,
+    .modal-btn:active {
+      transform: translateY(1px) scale(0.985);
+      filter: brightness(0.94);
+    }
+    .corner-btn.active { background-image: url('/ui/button-bg/pill-red.png'); }
+    #menu-btn { right: 292px; font-family: 'SartoshiScript', monospace; font-size: 18px; line-height: 1; text-transform: none; }
     #follow-toggle { right: 196px; }
     #cam-toggle { right: 100px; }
     #toggle-controls { right: 12px; }
@@ -561,11 +618,13 @@
     /* Settings panel */
     #controls {
       position: absolute; top: 44px; right: 12px;
-      background: rgba(0,0,0,0.8); backdrop-filter: blur(6px);
-      padding: 12px 14px; border-radius: 8px;
+      background: linear-gradient(180deg, rgba(8, 15, 21, 0.92), rgba(5, 10, 15, 0.92)); backdrop-filter: blur(8px);
+      padding: 12px 14px; border-radius: 18px 16px 15px 20px / 17px 18px 16px 19px;
       color: #fff; font-size: 12px; z-index: 12;
       min-width: 200px; max-height: 70vh; overflow-y: auto;
       display: none;
+      border: 1px solid rgba(255,255,255,0.14);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.36);
     }
     #controls h3 { margin: 0 0 8px; font-size: 12px; opacity: 0.5; text-transform: uppercase; letter-spacing: 1px; }
     #controls label { display: flex; justify-content: space-between; align-items: center; margin: 5px 0; gap: 8px; }
@@ -575,24 +634,28 @@
     #defaults-btn {
       margin-top: 8px; width: 100%; padding: 5px;
       font-family: monospace; font-size: 11px;
-      background: rgba(255,255,255,0.1); color: #fff;
-      border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; cursor: pointer;
+      background: url('/ui/button-bg/wide-dark.png') center / 100% 100% no-repeat;
+      color: #fff;
+      border: 0; border-radius: 0; cursor: pointer;
+      text-shadow: var(--btn-text-shadow);
     }
 
     /* Camera hint tooltip */
     #cam-hint {
       display: none; position: absolute; top: 44px; right: 12px;
-      background: rgba(0,0,0,0.85); color: #4ecdc4;
-      padding: 8px 14px; border-radius: 6px;
+      background: linear-gradient(180deg, rgba(8, 16, 22, 0.94), rgba(5, 10, 15, 0.94)); color: #4ecdc4;
+      padding: 8px 14px; border-radius: 14px 17px 13px 16px / 15px 13px 17px 14px;
       font-family: monospace; font-size: 11px; z-index: 13;
       pointer-events: none; line-height: 1.6;
+      border: 1px solid rgba(255,255,255,0.14);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.3);
     }
 
     /* Bottom HUD bar */
     #hud {
       position: absolute; bottom: 0; left: 0; right: 0;
-      background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
-      z-index: 10; padding: 8px 12px 10px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0.82)); backdrop-filter: blur(8px);
+      z-index: 10; padding: 8px 12px 12px;
       border-top: 1px solid rgba(255,255,255,0.08);
     }
     #level-select {
@@ -600,26 +663,51 @@
       overflow-x: auto; -webkit-overflow-scrolling: touch;
     }
     .level-btn {
-      background: rgba(255,255,255,0.08); color: #fff;
-      border: 1px solid rgba(255,255,255,0.12); border-radius: 5px;
+      background: url('/ui/button-bg/pill-dark.png') center / 100% 100% no-repeat;
+      color: #fff;
+      border: 0; border-radius: 0;
       padding: 6px 12px; font-family: monospace; font-size: 12px;
       cursor: pointer; white-space: nowrap; flex-shrink: 0;
+      text-shadow: var(--btn-text-shadow);
     }
-    .level-btn.active { background: #e94560; border-color: #e94560; }
-    .level-btn:active:not(.active) { background: rgba(255,255,255,0.15); }
+    .level-btn.active { background-image: url('/ui/button-bg/pill-red.png'); }
 
     #action-row {
       display: flex; align-items: center; justify-content: center; gap: 8px;
     }
     .action-btn {
       padding: 10px 24px; font-family: monospace; font-size: 15px; font-weight: bold;
-      color: #fff; border: none; border-radius: 6px; cursor: pointer;
+      color: #fff;
+      border: none;
+      border-radius: 0;
+      cursor: pointer;
       text-transform: uppercase; letter-spacing: 1px;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: 100% 100%;
+      text-shadow: var(--btn-text-shadow);
+      transition: transform 140ms ease, filter 140ms ease;
     }
-    .action-btn:active { filter: brightness(1.2); }
-    #go-btn { background: #4ecdc4; display: none; font-family: 'SartoshiScript', monospace; font-size: 22px; }
-    #reset-btn { background: #e94560; display: none; }
-    #clear-btn { background: rgba(255,255,255,0.15); display: none; font-size: 13px; padding: 8px 16px; }
+    #go-btn {
+      background: url('/ui/button-bg/rect-teal.png') center / 100% 100% no-repeat;
+      display: none;
+      font-family: 'SartoshiScript', monospace;
+      font-size: 22px;
+      line-height: 1;
+      text-transform: none;
+    }
+    #reset-btn {
+      background: url('/ui/button-bg/rect-red.png') center / 100% 100% no-repeat;
+      display: none;
+      font-family: 'SartoshiScript', monospace;
+      font-size: 22px;
+      line-height: 1;
+      text-transform: none;
+    }
+    #clear-btn {
+      background: url('/ui/button-bg/rect-dark.png') center / 100% 100% no-repeat;
+      display: none; font-size: 13px; padding: 8px 16px;
+    }
 
     /* Impact captures — above HUD */
     #impact-captures {
@@ -627,12 +715,54 @@
     }
     #impact-captures > div { display: flex; gap: 6px; }
     .capture-btn {
-      padding: 10px 16px; border-radius: 6px; cursor: pointer;
+      padding: 10px 16px; border-radius: 0; cursor: pointer;
       font-family: monospace; font-size: 12px; font-weight: bold; text-align: center;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: 100% 100%;
+      text-shadow: var(--btn-text-shadow);
     }
-    #impact-photo .capture-btn { background: #fff; color: #1a1a2e; }
-    #impact-video-wrap .capture-btn { background: #4ecdc4; color: #1a1a2e; }
+    #impact-photo .capture-btn { background-image: url('/ui/button-bg/wide-neutral.png'); color: #1a1a2e; text-shadow: none; }
+    #impact-video-wrap .capture-btn { background-image: url('/ui/button-bg/wide-teal.png'); color: #e7fffd; }
+    #impact-full-video .capture-btn { background-image: url('/ui/button-bg/wide-red.png'); color: #fff5ef; }
+
+    #mfer-mode-btn {
+      flex-shrink: 0;
+      padding: 4px 8px;
+      font-family: monospace;
+      font-size: 11px;
+      cursor: pointer;
+      background: url('/ui/button-bg/pill-dark.png') center / 100% 100% no-repeat;
+      color: #fff;
+      border: 0;
+      border-radius: 0;
+      text-shadow: var(--btn-text-shadow);
+    }
+    #mfer-id-input {
+      display: none;
+      width: 70px;
+      padding: 6px 8px;
+      font-family: monospace;
+      font-size: 11px;
+      background: rgba(255,255,255,0.08);
+      color: var(--ink-cream);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 10px;
+    }
+    .modal-btn {
+      padding: 8px 18px;
+      font-size: 13px;
+      border: 0;
+      border-radius: 0;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: 100% 100%;
+      color: #fff;
+      text-shadow: var(--btn-text-shadow);
+    }
+    .modal-btn-download { background-image: url('/ui/button-bg/wide-teal.png'); color: #e7fffd; }
+    .modal-btn-share { background-image: url('/ui/button-bg/pill-blue.png'); color: #eef2ff; }
+    .modal-btn-close { background-image: url('/ui/button-bg/wide-dark.png'); }
 
     /* Mobile adjustments */
     @media (max-width: 768px) {
@@ -783,8 +913,8 @@
     <button id="defaults-btn">defaults</button>
     <h3 style="margin-top:10px;">mfer</h3>
     <div style="display:flex;gap:4px;align-items:center;">
-      <button id="mfer-mode-btn" style="flex-shrink:0;padding:4px 8px;font-family:monospace;font-size:11px;background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:4px;cursor:pointer;">random</button>
-      <input id="mfer-id-input" type="number" min="0" max="10020" placeholder="mfer #" style="display:none;width:70px;padding:4px;font-family:monospace;font-size:11px;background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:4px;">
+      <button id="mfer-mode-btn" type="button">random</button>
+      <input id="mfer-id-input" type="number" min="0" max="10020" placeholder="mfer #">
     </div>
   </div>
 
@@ -793,7 +923,7 @@
     <div>
       <div id="impact-photo" style="cursor:pointer;"><div class="capture-btn">save photo</div></div>
       <div id="impact-video-wrap" style="cursor:pointer;display:none;"><div class="capture-btn">save gif</div></div>
-      <div id="impact-full-video" style="cursor:pointer;display:none;"><div class="capture-btn" style="background:#ff8844;">save video</div></div>
+      <div id="impact-full-video" style="cursor:pointer;display:none;"><div class="capture-btn">save video</div></div>
     </div>
   </div>
 
@@ -804,9 +934,9 @@
       <div id="save-modal-hint" style="background:rgba(255,255,255,0.1);padding:10px;border-radius:8px;margin-bottom:14px;color:#aaa;font-family:monospace;font-size:12px;"></div>
       <div id="save-modal-media" style="display:flex;justify-content:center;margin-bottom:14px;"></div>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-        <button id="save-modal-download" class="action-btn" style="background:#4ecdc4;font-size:13px;padding:8px 18px;">download</button>
-        <button id="save-modal-share" class="action-btn" style="background:#6b8cff;font-size:13px;padding:8px 18px;display:none;">share</button>
-        <button id="save-modal-close" class="action-btn" style="background:rgba(255,255,255,0.15);font-size:13px;padding:8px 18px;">close</button>
+        <button id="save-modal-download" class="action-btn modal-btn modal-btn-download">download</button>
+        <button id="save-modal-share" class="action-btn modal-btn modal-btn-share" style="display:none;">share</button>
+        <button id="save-modal-close" class="action-btn modal-btn modal-btn-close">close</button>
       </div>
     </div>
   </div>
